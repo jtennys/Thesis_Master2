@@ -39,8 +39,8 @@ LMM info: area 'data' item of 1 bytes allocated in SRAM page 0
 LMM info: area 'data' item of 1 bytes allocated in SRAM page 0
 LMM info: area 'receiver_config_RAM' uses 0 bytes in SRAM page 0
 LMM info: area 'transmitter_config_RAM' uses 0 bytes in SRAM page 0
-  ROM 49% full. 7974 bytes used (does not include absolute areas).
+  ROM 48% full. 7779 bytes used (does not include absolute areas).
   RAM 21% full. 163 bytes used (does not include stack usage).
 idata dump at output/Thesis_Master.idata
  
-Thesis_Master - 0 error(s) 0 warning(s) 18:28:38
+Thesis_Master - 0 error(s) 0 warning(s) 17:00:34

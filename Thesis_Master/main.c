@@ -43,7 +43,9 @@
 // These defines are used for transmission timing.
 #define 	RX_TIMEOUT_DURATION			(3)		// This is receive wait time in 1 ms units.
 
-#define		MAX_TIMEOUTS				(3)		// Number of timeouts allowed before hello mode exit.
+#define		SERVO_FIND_TIME				(50)	// The wait time after issuing clear config.
+
+#define		MAX_TIMEOUTS				(5)		// Number of timeouts allowed before hello mode exit.
 #define		NUM_SWEEPS					(5)		// The number of module sweeps to do at init.
 
 // This is the maximum number of allowable modules per branch out from the master
@@ -135,34 +137,21 @@ int pingModule(int module_id)
 	while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
 	
 	xmitWait();
-	
-	configToggle(RX_MODE);	// Listen for the response.
-	
-	RX_TIMEOUT_Stop();
-	TIMEOUT = 0;
-	RX_TIMEOUT_Start();
-	
-	while((TIMEOUT < RX_TIMEOUT_DURATION) && (!response))
+
+	if(validTransmission())
 	{
-		if(validTransmission())
+		if(COMMAND_TYPE == PING)	// This is the response we are looking for.
 		{
-			if(COMMAND_TYPE == PING)	// This is the response we are looking for.
+			// If this is for me, check who it was from.
+			if(COMMAND_DESTINATION == MASTER_ID)
 			{
-				// If this is for me, check who it was from.
-				if(COMMAND_DESTINATION == MASTER_ID)
+				if(COMMAND_SOURCE == module_id)
 				{
-					if(COMMAND_SOURCE == module_id)
-					{
-						response = 1;
-					}
+					response = 1;
 				}
 			}
 		}
 	}
-	
-	RX_TIMEOUT_Stop();
-	TIMEOUT = 0;
-	RX_TIMEOUT_Start();
 	
 	return response;
 }
@@ -188,33 +177,20 @@ int assignID(int assigned_ID)
 	
 	xmitWait();
 	
-	configToggle(RX_MODE);	// Switch back to receive mode.
-	
-	RX_TIMEOUT_Stop();
-	TIMEOUT = 0;
-	RX_TIMEOUT_Start();
-	
-	while((TIMEOUT < RX_TIMEOUT_DURATION) && (!success))
+	if(validTransmission())
 	{
-		if(validTransmission())
+		if(COMMAND_TYPE == ID_ASSIGN_OK)	// This is the response we are looking for.
 		{
-			if(COMMAND_TYPE == ID_ASSIGN_OK)	// This is the response we are looking for.
+			// If this is for me, check who it was from.
+			if(COMMAND_DESTINATION == MASTER_ID)
 			{
-				// If this is for me, check who it was from.
-				if(COMMAND_DESTINATION == MASTER_ID)
+				if(COMMAND_SOURCE == assigned_ID)
 				{
-					if(COMMAND_SOURCE == assigned_ID)
-					{
-						success = 1;
-					}
+					success = 1;
 				}
 			}
 		}
 	}
-	
-	RX_TIMEOUT_Stop();
-	TIMEOUT = 0;
-	RX_TIMEOUT_Start();
 	
 	return success;
 }
@@ -238,6 +214,10 @@ void clearConfig(void)
 	while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
 	
 	xmitWait();
+	
+	// Wait for servo find time.
+	configToggle(RX_MODE);
+	while(TIMEOUT < SERVO_FIND_TIME) { }
 }
 
 // This function transmits a hello message.
@@ -268,6 +248,8 @@ int validTransmission(void)
 	int valid_transmit = 0;
 	int i = 0;
 	char tempByte = 0;
+	
+	configToggle(RX_MODE);	// Listen for the response.
 	
 	while(TIMEOUT < RX_TIMEOUT_DURATION)
 	{
@@ -316,6 +298,9 @@ int validTransmission(void)
 			}
 		}
 	}
+	
+	RX_TIMEOUT_Stop();
+	TIMEOUT = 0;
 	
 	return valid_transmit;
 }
@@ -716,14 +701,17 @@ int initSweep(void)
 	
 	// Clear the modules.
 	clearConfig();
-		
-	// Send out a probing message.
-	sayHello();
 	
 	// This loop continuously probes and listens at intervals
 	// set by the RX_TIMEOUT_DURATION variable.
 	while(num_timeouts < MAX_TIMEOUTS)
-	{	
+	{
+		// If we are not maxed out on modules, look for more.
+		if(currNumModules < MAX_MODULES)
+		{
+			sayHello();
+		}
+			
 		if(validTransmission())
 		{
 			if(COMMAND_TYPE == HELLO_BYTE)	// Someone else is out there!
@@ -731,40 +719,18 @@ int initSweep(void)
 				// If this is for me, assign them an ID.
 				if(COMMAND_DESTINATION == MASTER_ID)
 				{
-					currNumModules++;		// Increment the number of modules connected.
 					num_timeouts = 0;		// Reset number of timeouts since we found someone.
 		
-					if(!assignID(currNumModules))
+					if(assignID(currNumModules+1))
 					{
-						// If the module did not respond that the ID was assigned,
-						// make an effort to ping it in case that transmission was lost
-						// before ultimately deciding that the module didn't configure.
-						for(i = 0; i < ping_tries; i++)
-						{	
-							if(pingModule(currNumModules))
-							{
-								i = ping_tries+1;
-							}
-						}
-						
-						// If we landed right at ping_tries, we failed.
-						if(i == ping_tries)
-						{
-							currNumModules--;
-						}
+						currNumModules++;		// Increment the number of modules connected.
 					}
 				}
 			}
 		}
-		else if(TIMEOUT >= RX_TIMEOUT_DURATION)
+		else
 		{	
 			num_timeouts++;
-			
-			// If we are not maxed out on modules, look for more.
-			if(currNumModules < MAX_MODULES)
-			{
-				sayHello();
-			}
 		}
 	}
 	
