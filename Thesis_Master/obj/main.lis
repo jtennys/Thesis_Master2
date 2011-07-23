@@ -1,0 +1,3613 @@
+ 0000                   cpu LMM
+                        .module main.c
+                        .area text(rom, con, rel)
+ 0000                   .dbfile ./main.c
+ 0000                   .dbfile C:\Users\Admin\DOCUME~1\PSOCDE~1.0PR\THC055~1\THESIS~1\main.c
+ 0000                   .dbfunc e main _main fV
+ 0000           _main::
+ 0000                   .dbline -1
+ 0000                   .dbline 96
+ 0000           ; //----------------------------------------------------------------------------
+ 0000           ; // C main line
+ 0000           ; //----------------------------------------------------------------------------
+ 0000           ; 
+ 0000           ; #include <m8c.h>              // part specific constants and macros
+ 0000           ; #include "PSoCAPI.h"          // PSoC API definitions for all User Modules
+ 0000           ; #include "psocdynamic.h"
+ 0000           ; #include <stdlib.h>
+ 0000           ; #include <string.h>
+ 0000           ; #pragma interrupt_handler TX_TIMEOUT_ISR
+ 0000           ; #pragma interrupt_handler RX_TIMEOUT_ISR
+ 0000           ; 
+ 0000           ; // These defines are used as parameters of the configToggle function.
+ 0000           ; // Passing one or the other in the function call switches the system between PC, TX, and RX modes.
+ 0000           ; #define               PC_MODE                                         (2)
+ 0000           ; #define               RX_MODE                                         (1)
+ 0000           ; #define               TX_MODE                                         (0)
+ 0000           ; 
+ 0000           ; // These defines are used as comparisons to find what port the newest module is connected to.
+ 0000           ; #define               PORT_1                                          ('1')
+ 0000           ; #define               PORT_2                                          ('2')
+ 0000           ; #define               PORT_3                                          ('3')
+ 0000           ; #define               PORT_4                                          ('4')
+ 0000           ; 
+ 0000           ; // These defines are used as transmission indicators.
+ 0000           ; #define               START_TRANSMIT                          (252)   // Indicates the beginning of a transmission.
+ 0000           ; #define               END_TRANSMIT                            (253)   // Indicates the end of a transmission.
+ 0000           ; #define               HELLO_BYTE                                      (200)   // Indicates master is ready to talk.
+ 0000           ; #define               ID_ASSIGNMENT                           (201)   // Indicates an ID assignment from the master.
+ 0000           ; #define               ID_ASSIGN_OK                            (202)   // Indicates an ID assignment is acknowledged.
+ 0000           ; #define               PING                                            (203)   // Indicates that someone is pinging someone else.
+ 0000           ; #define               CLEAR                                           (204)   // Indicates that the master is asking for a config clear.
+ 0000           ; #define               MASTER_ID                                       (0)             // The master node's ID.
+ 0000           ; #define               BROADCAST                                       (254)   // The broadcast ID for talking to all nodes.
+ 0000           ; #define               BLANK_MODULE_ID                         (251)   // This is the ID of an unconfigured module.
+ 0000           ; 
+ 0000           ; // These defines are used to fill in the instruction we are using on the servo.
+ 0000           ; #define               PING_SERVO                                      (1)             // This is the instruction number for ping.
+ 0000           ; #define               READ_SERVO                                      (2)             // This is the instruction number for a read.
+ 0000           ; #define               WRITE_SERVO                                     (3)             // This is the instruction number for a write.
+ 0000           ; #define               RESET_SERVO                                     (6)             // This is the instruction to reset the servo EEPROM.
+ 0000           ; 
+ 0000           ; // These defines are used for transmission timing.
+ 0000           ; #define       RX_TIMEOUT_DURATION                     (3)             // This is receive wait time in 1 ms units.
+ 0000           ; 
+ 0000           ; #define               MAX_TIMEOUTS                            (3)             // Number of timeouts allowed before hello mode exit.
+ 0000           ; #define               NUM_SWEEPS                                      (5)             // The number of module sweeps to do at init.
+ 0000           ; 
+ 0000           ; // This is the maximum number of allowable modules per branch out from the master
+ 0000           ; #define               MAX_MODULES                                     (250)
+ 0000           ; 
+ 0000           ; #define               SERVO_START                                     (255)
+ 0000           ; 
+ 0000           ; // This function receives a mode identifier as a parameter and toggles the
+ 0000           ; // system configuration between receive and transmit modes for half duplex UART.
+ 0000           ; void configToggle(int mode);
+ 0000           ; 
+ 0000           ; // This function pings the index passed to it. Returns 1 on success, 0 on fail.
+ 0000           ; int pingModule(int module_id);
+ 0000           ; 
+ 0000           ; // This function assigns an ID to a module.
+ 0000           ; int assignID(int assigned_ID);
+ 0000           ; 
+ 0000           ; int validTransmission(void);
+ 0000           ; 
+ 0000           ; void decodeTransmission(void);
+ 0000           ; 
+ 0000           ; 
+ 0000           ; void sayHello(void);
+ 0000           ; 
+ 0000           ; void servoInstruction(char id, char length, char instruction, char address, char value);
+ 0000           ; void longServoInstruction(char id, char length, char instruction, char address, char value1, char value2);
+ 0000           ; 
+ 0000           ; void clearConfig(void);
+ 0000           ; // This function checks the current mode and unloads the configuration for that mode.
+ 0000           ; void unloadAllConfigs(void);
+ 0000           ; // This function unloads the configuration corresponding to the number passed to it.
+ 0000           ; void unloadConfig(int config_num);
+ 0000           ; // Initialization function for the slave module controllers.
+ 0000           ; void initializeSlaves(void);
+ 0000           ; int initSweep(void);
+ 0000           ; // Static wait time of approximately 50 microseconds for use after starting a transmission.
+ 0000           ; void xmitWait(void);
+ 0000           ; 
+ 0000           ; // This flag is set if there is a timeout.
+ 0000           ; int TIMEOUT;
+ 0000           ; 
+ 0000           ; int NUM_MODULES;                      // Stores the number of modules that have been discovered.
+ 0000           ; char COMMAND_SOURCE;          // Stores who the current command is from.
+ 0000           ; char COMMAND_DESTINATION;     // Stores who the current command is for.
+ 0000           ; char COMMAND_TYPE;                    // Stores the type of command that was just read.
+ 0000           ; char PARAM[10];                               // Stores a parameters that accompanies the command (if any).
+ 0000           ; int STATE;                                    // Stores the current configuration state of the system.
+ 0000           ; 
+ 0000           ; void main()
+ 0000           ; {     
+ 0000                   .dbline 98
+ 0000           ;       // Initialize the number of modules.
+ 0000           ;       NUM_MODULES = 0;
+ 0000 62D000            mov REG[0xd0],>_NUM_MODULES
+ 0003 550100            mov [_NUM_MODULES+1],0
+ 0006 550000            mov [_NUM_MODULES],0
+ 0009                   .dbline 101
+ 0009           ;       
+ 0009           ;       // Activate GPIO ISR.
+ 0009           ;       M8C_EnableIntMask(INT_MSK0,INT_MSK0_GPIO);
+ 0009 43E020            or REG[0xe0],32
+ 000C                   .dbline 104
+ 000C           ;       
+ 000C           ;       // Turn on global interrupts for the transmission timeout timer.
+ 000C           ;       M8C_EnableGInt;
+ 000C 7101                      or  F, 01h
+ 000E           
+ 000E 8021              xjmp L3
+ 0010           L2:
+ 0010                   .dbline 107
+ 0010           ;       
+ 0010           ;       while(1)
+ 0010           ;       {
+ 0010                   .dbline 108
+ 0010           ;               if(!NUM_MODULES)
+ 0010 62D000            mov REG[0xd0],>_NUM_MODULES
+ 0013 3C0000            cmp [_NUM_MODULES],0
+ 0016 B00B              jnz L5
+ 0018 3C0100            cmp [_NUM_MODULES+1],0
+ 001B B006              jnz L5
+ 001D           X1:
+ 001D                   .dbline 109
+ 001D           ;               {
+ 001D                   .dbline 110
+ 001D           ;                       initializeSlaves();
+ 001D 7C0C87            xcall _initializeSlaves
+ 0020                   .dbline 111
+ 0020           ;               }
+ 0020 800F              xjmp L6
+ 0022           L5:
+ 0022                   .dbline 112
+ 0022           ;               else if(COMP_SERIAL_bCmdCheck())                // If there's a computer command, read it.
+ 0022 10                push X
+ 0023 7C0000            xcall _COMP_SERIAL_bCmdCheck
+ 0026 62D000            mov REG[0xd0],>__r0
+ 0029 20                pop X
+ 002A 3900              cmp A,0
+ 002C A003              jz L7
+ 002E                   .dbline 113
+ 002E           ;               {
+ 002E                   .dbline 114
+ 002E           ;                       decodeTransmission();
+ 002E 938F              xcall _decodeTransmission
+ 0030                   .dbline 115
+ 0030           ;               }
+ 0030           L7:
+ 0030           L6:
+ 0030                   .dbline 116
+ 0030           ;       }
+ 0030           L3:
+ 0030                   .dbline 106
+ 0030 8FDF              xjmp L2
+ 0032           X0:
+ 0032                   .dbline -2
+ 0032           L1:
+ 0032                   .dbline 0 ; func end
+ 0032 8FFF              jmp .
+ 0034                   .dbend
+ 0034                   .dbfunc e pingModule _pingModule fI
+ 0034           ;       response -> X+0
+ 0034           ;      module_id -> X-5
+ 0034           _pingModule::
+ 0034                   .dbline -1
+ 0034 10                push X
+ 0035 4F                mov X,SP
+ 0036 3802              add SP,2
+ 0038                   .dbline 120
+ 0038           ; }
+ 0038           ; 
+ 0038           ; int pingModule(int module_id)
+ 0038           ; {
+ 0038                   .dbline 121
+ 0038           ;       int response = 0;
+ 0038 560100            mov [X+1],0
+ 003B 560000            mov [X+0],0
+ 003E                   .dbline 123
+ 003E           ;       
+ 003E           ;       configToggle(TX_MODE);  // Toggle into TX mode.
+ 003E 5000              mov A,0
+ 0040 08                push A
+ 0041 08                push A
+ 0042 7C0B6F            xcall _configToggle
+ 0045 38FE              add SP,-2
+ 0047                   .dbline 126
+ 0047           ;                       
+ 0047           ;       // Transmit a hello.
+ 0047           ;       TRANSMIT_PutChar(START_TRANSMIT);
+ 0047 10                push X
+ 0048 50FC              mov A,-4
+ 004A 7C0000            xcall _TRANSMIT_PutChar
+ 004D 20                pop X
+ 004E                   .dbline 127
+ 004E           ;       TRANSMIT_PutChar(START_TRANSMIT);
+ 004E 10                push X
+ 004F 50FC              mov A,-4
+ 0051 7C0000            xcall _TRANSMIT_PutChar
+ 0054 20                pop X
+ 0055                   .dbline 128
+ 0055           ;       TRANSMIT_PutChar(MASTER_ID);
+ 0055 10                push X
+ 0056 5000              mov A,0
+ 0058 7C0000            xcall _TRANSMIT_PutChar
+ 005B 20                pop X
+ 005C                   .dbline 129
+ 005C           ;       TRANSMIT_PutChar(module_id);
+ 005C 62D000            mov REG[0xd0],>__r0
+ 005F 52FC              mov A,[X-4]
+ 0061 10                push X
+ 0062 7C0000            xcall _TRANSMIT_PutChar
+ 0065 20                pop X
+ 0066                   .dbline 130
+ 0066           ;       TRANSMIT_PutChar(PING);
+ 0066 10                push X
+ 0067 50CB              mov A,-53
+ 0069 7C0000            xcall _TRANSMIT_PutChar
+ 006C 20                pop X
+ 006D                   .dbline 131
+ 006D           ;       TRANSMIT_PutChar(END_TRANSMIT);
+ 006D 10                push X
+ 006E 50FD              mov A,-3
+ 0070 7C0000            xcall _TRANSMIT_PutChar
+ 0073 20                pop X
+ 0074                   .dbline 132
+ 0074           ;       TRANSMIT_PutChar(END_TRANSMIT);
+ 0074 10                push X
+ 0075 50FD              mov A,-3
+ 0077 7C0000            xcall _TRANSMIT_PutChar
+ 007A 20                pop X
+ 007B           L10:
+ 007B                   .dbline 135
+ 007B           ;       
+ 007B           ;       // Wait for the transmission to finish.
+ 007B           ;       while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
+ 007B           L11:
+ 007B                   .dbline 135
+ 007B 10                push X
+ 007C 7C0000            xcall _TRANSMIT_bReadTxStatus
+ 007F 62D000            mov REG[0xd0],>__r0
+ 0082 20                pop X
+ 0083 5300              mov [__r0],A
+ 0085 470020            tst [__r0],32
+ 0088 AFF2              jz L10
+ 008A                   .dbline 137
+ 008A           ;       
+ 008A           ;       xmitWait();
+ 008A 7C0E72            xcall _xmitWait
+ 008D                   .dbline 139
+ 008D           ;       
+ 008D           ;       configToggle(RX_MODE);  // Listen for the response.
+ 008D 5000              mov A,0
+ 008F 08                push A
+ 0090 5001              mov A,1
+ 0092 08                push A
+ 0093 7C0B6F            xcall _configToggle
+ 0096 38FE              add SP,-2
+ 0098                   .dbline 141
+ 0098           ;       
+ 0098           ;       RX_TIMEOUT_Stop();
+ 0098 10                push X
+ 0099 7C0000            xcall _RX_TIMEOUT_Stop
+ 009C 20                pop X
+ 009D                   .dbline 142
+ 009D           ;       TIMEOUT = 0;
+ 009D 62D000            mov REG[0xd0],>_TIMEOUT
+ 00A0 550100            mov [_TIMEOUT+1],0
+ 00A3 550000            mov [_TIMEOUT],0
+ 00A6                   .dbline 143
+ 00A6           ;       RX_TIMEOUT_Start();
+ 00A6 10                push X
+ 00A7 7C0000            xcall _RX_TIMEOUT_Start
+ 00AA 20                pop X
+ 00AB 803C              xjmp L14
+ 00AD           L13:
+ 00AD                   .dbline 146
+ 00AD           ;       
+ 00AD           ;       while((TIMEOUT < RX_TIMEOUT_DURATION) && (!response))
+ 00AD           ;       {
+ 00AD                   .dbline 147
+ 00AD           ;               if(validTransmission())
+ 00AD 921C              xcall _validTransmission
+ 00AF 62D000            mov REG[0xd0],>__r0
+ 00B2 3C0000            cmp [__r0],0
+ 00B5 B006              jnz X2
+ 00B7 3C0000            cmp [__r1],0
+ 00BA A02D              jz L16
+ 00BC           X2:
+ 00BC                   .dbline 148
+ 00BC           ;               {
+ 00BC                   .dbline 149
+ 00BC           ;                       if(COMMAND_TYPE == PING)        // This is the response we are looking for.
+ 00BC 62D000            mov REG[0xd0],>_COMMAND_TYPE
+ 00BF 3C00CB            cmp [_COMMAND_TYPE],-53
+ 00C2 B025              jnz L18
+ 00C4                   .dbline 150
+ 00C4           ;                       {
+ 00C4                   .dbline 152
+ 00C4           ;                               // If this is for me, check who it was from.
+ 00C4           ;                               if(COMMAND_DESTINATION == MASTER_ID)
+ 00C4 62D000            mov REG[0xd0],>_COMMAND_DESTINATION
+ 00C7 3C0000            cmp [_COMMAND_DESTINATION],0
+ 00CA B01D              jnz L20
+ 00CC                   .dbline 153
+ 00CC           ;                               {
+ 00CC                   .dbline 154
+ 00CC           ;                                       if(COMMAND_SOURCE == module_id)
+ 00CC 62D000            mov REG[0xd0],>_COMMAND_SOURCE
+ 00CF 5100              mov A,[_COMMAND_SOURCE]
+ 00D1 62D000            mov REG[0xd0],>__r0
+ 00D4 5300              mov [__r1],A
+ 00D6 5000              mov A,0
+ 00D8 3BFB              cmp A,[X-5]
+ 00DA B00D              jnz L22
+ 00DC 5100              mov A,[__r1]
+ 00DE 3BFC              cmp A,[X-4]
+ 00E0 B007              jnz L22
+ 00E2           X3:
+ 00E2                   .dbline 155
+ 00E2           ;                                       {
+ 00E2                   .dbline 156
+ 00E2           ;                                               response = 1;
+ 00E2 560101            mov [X+1],1
+ 00E5 560000            mov [X+0],0
+ 00E8                   .dbline 157
+ 00E8           ;                                       }
+ 00E8           L22:
+ 00E8                   .dbline 158
+ 00E8           ;                               }
+ 00E8           L20:
+ 00E8                   .dbline 159
+ 00E8           ;                       }
+ 00E8           L18:
+ 00E8                   .dbline 160
+ 00E8           ;               }
+ 00E8           L16:
+ 00E8                   .dbline 161
+ 00E8           ;       }
+ 00E8           L14:
+ 00E8                   .dbline 145
+ 00E8 62D000            mov REG[0xd0],>_TIMEOUT
+ 00EB 5101              mov A,[_TIMEOUT+1]
+ 00ED 1103              sub A,3
+ 00EF 5100              mov A,[_TIMEOUT]
+ 00F1 3180              xor A,-128
+ 00F3 1980              sbb A,(0 ^ 0x80)
+ 00F5 D00B              jnc L24
+ 00F7           X4:
+ 00F7 3D0000            cmp [X+0],0
+ 00FA B006              jnz X5
+ 00FC 3D0100            cmp [X+1],0
+ 00FF AFAD              jz L13
+ 0101           X5:
+ 0101           L24:
+ 0101                   .dbline 163
+ 0101           ;       
+ 0101           ;       RX_TIMEOUT_Stop();
+ 0101 10                push X
+ 0102 7C0000            xcall _RX_TIMEOUT_Stop
+ 0105 20                pop X
+ 0106                   .dbline 164
+ 0106           ;       TIMEOUT = 0;
+ 0106 62D000            mov REG[0xd0],>_TIMEOUT
+ 0109 550100            mov [_TIMEOUT+1],0
+ 010C 550000            mov [_TIMEOUT],0
+ 010F                   .dbline 165
+ 010F           ;       RX_TIMEOUT_Start();
+ 010F 10                push X
+ 0110 7C0000            xcall _RX_TIMEOUT_Start
+ 0113 20                pop X
+ 0114                   .dbline 167
+ 0114           ;       
+ 0114           ;       return response;
+ 0114 62D000            mov REG[0xd0],>__r0
+ 0117 5201              mov A,[X+1]
+ 0119 5300              mov [__r1],A
+ 011B 5200              mov A,[X+0]
+ 011D 5300              mov [__r0],A
+ 011F                   .dbline -2
+ 011F           L9:
+ 011F 38FE              add SP,-2
+ 0121 20                pop X
+ 0122                   .dbline 0 ; func end
+ 0122 7F                ret
+ 0123                   .dbsym l response 0 I
+ 0123                   .dbsym l module_id -5 I
+ 0123                   .dbend
+ 0123                   .dbfunc e assignID _assignID fI
+ 0123           ;        success -> X+0
+ 0123           ;    assigned_ID -> X-5
+ 0123           _assignID::
+ 0123                   .dbline -1
+ 0123 10                push X
+ 0124 4F                mov X,SP
+ 0125 3802              add SP,2
+ 0127                   .dbline 171
+ 0127           ; }
+ 0127           ; 
+ 0127           ; int assignID(int assigned_ID)
+ 0127           ; {
+ 0127                   .dbline 172
+ 0127           ;       int success = 0;                // Stores 0 on fail, 1 on success.
+ 0127 560100            mov [X+1],0
+ 012A 560000            mov [X+0],0
+ 012D                   .dbline 174
+ 012D           ;       
+ 012D           ;       configToggle(TX_MODE);  // Switch to TX mode.
+ 012D 5000              mov A,0
+ 012F 08                push A
+ 0130 08                push A
+ 0131 7C0B6F            xcall _configToggle
+ 0134 38FE              add SP,-2
+ 0136                   .dbline 177
+ 0136           ; 
+ 0136           ;       // Transmit the assignment.
+ 0136           ;       TRANSMIT_PutChar(START_TRANSMIT);
+ 0136 10                push X
+ 0137 50FC              mov A,-4
+ 0139 7C0000            xcall _TRANSMIT_PutChar
+ 013C 20                pop X
+ 013D                   .dbline 178
+ 013D           ;       TRANSMIT_PutChar(START_TRANSMIT);
+ 013D 10                push X
+ 013E 50FC              mov A,-4
+ 0140 7C0000            xcall _TRANSMIT_PutChar
+ 0143 20                pop X
+ 0144                   .dbline 179
+ 0144           ;       TRANSMIT_PutChar(MASTER_ID);
+ 0144 10                push X
+ 0145 5000              mov A,0
+ 0147 7C0000            xcall _TRANSMIT_PutChar
+ 014A 20                pop X
+ 014B                   .dbline 180
+ 014B           ;       TRANSMIT_PutChar(BLANK_MODULE_ID);
+ 014B 10                push X
+ 014C 50FB              mov A,-5
+ 014E 7C0000            xcall _TRANSMIT_PutChar
+ 0151 20                pop X
+ 0152                   .dbline 181
+ 0152           ;       TRANSMIT_PutChar(ID_ASSIGNMENT);
+ 0152 10                push X
+ 0153 50C9              mov A,-55
+ 0155 7C0000            xcall _TRANSMIT_PutChar
+ 0158 20                pop X
+ 0159                   .dbline 182
+ 0159           ;       TRANSMIT_PutChar(assigned_ID);
+ 0159 62D000            mov REG[0xd0],>__r0
+ 015C 52FC              mov A,[X-4]
+ 015E 10                push X
+ 015F 7C0000            xcall _TRANSMIT_PutChar
+ 0162 20                pop X
+ 0163                   .dbline 183
+ 0163           ;       TRANSMIT_PutChar(END_TRANSMIT);
+ 0163 10                push X
+ 0164 50FD              mov A,-3
+ 0166 7C0000            xcall _TRANSMIT_PutChar
+ 0169 20                pop X
+ 016A                   .dbline 184
+ 016A           ;       TRANSMIT_PutChar(END_TRANSMIT);
+ 016A 10                push X
+ 016B 50FD              mov A,-3
+ 016D 7C0000            xcall _TRANSMIT_PutChar
+ 0170 20                pop X
+ 0171           L26:
+ 0171                   .dbline 187
+ 0171           ;       
+ 0171           ;       // Wait for the transmission to finish.
+ 0171           ;       while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
+ 0171           L27:
+ 0171                   .dbline 187
+ 0171 10                push X
+ 0172 7C0000            xcall _TRANSMIT_bReadTxStatus
+ 0175 62D000            mov REG[0xd0],>__r0
+ 0178 20                pop X
+ 0179 5300              mov [__r0],A
+ 017B 470020            tst [__r0],32
+ 017E AFF2              jz L26
+ 0180                   .dbline 189
+ 0180           ;       
+ 0180           ;       xmitWait();
+ 0180 7C0E72            xcall _xmitWait
+ 0183                   .dbline 191
+ 0183           ;       
+ 0183           ;       configToggle(RX_MODE);  // Switch back to receive mode.
+ 0183 5000              mov A,0
+ 0185 08                push A
+ 0186 5001              mov A,1
+ 0188 08                push A
+ 0189 7C0B6F            xcall _configToggle
+ 018C 38FE              add SP,-2
+ 018E                   .dbline 193
+ 018E           ;       
+ 018E           ;       RX_TIMEOUT_Stop();
+ 018E 10                push X
+ 018F 7C0000            xcall _RX_TIMEOUT_Stop
+ 0192 20                pop X
+ 0193                   .dbline 194
+ 0193           ;       TIMEOUT = 0;
+ 0193 62D000            mov REG[0xd0],>_TIMEOUT
+ 0196 550100            mov [_TIMEOUT+1],0
+ 0199 550000            mov [_TIMEOUT],0
+ 019C                   .dbline 195
+ 019C           ;       RX_TIMEOUT_Start();
+ 019C 10                push X
+ 019D 7C0000            xcall _RX_TIMEOUT_Start
+ 01A0 20                pop X
+ 01A1 803C              xjmp L30
+ 01A3           L29:
+ 01A3                   .dbline 198
+ 01A3           ;       
+ 01A3           ;       while((TIMEOUT < RX_TIMEOUT_DURATION) && (!success))
+ 01A3           ;       {
+ 01A3                   .dbline 199
+ 01A3           ;               if(validTransmission())
+ 01A3 9126              xcall _validTransmission
+ 01A5 62D000            mov REG[0xd0],>__r0
+ 01A8 3C0000            cmp [__r0],0
+ 01AB B006              jnz X6
+ 01AD 3C0000            cmp [__r1],0
+ 01B0 A02D              jz L32
+ 01B2           X6:
+ 01B2                   .dbline 200
+ 01B2           ;               {
+ 01B2                   .dbline 201
+ 01B2           ;                       if(COMMAND_TYPE == ID_ASSIGN_OK)        // This is the response we are looking for.
+ 01B2 62D000            mov REG[0xd0],>_COMMAND_TYPE
+ 01B5 3C00CA            cmp [_COMMAND_TYPE],-54
+ 01B8 B025              jnz L34
+ 01BA                   .dbline 202
+ 01BA           ;                       {
+ 01BA                   .dbline 204
+ 01BA           ;                               // If this is for me, check who it was from.
+ 01BA           ;                               if(COMMAND_DESTINATION == MASTER_ID)
+ 01BA 62D000            mov REG[0xd0],>_COMMAND_DESTINATION
+ 01BD 3C0000            cmp [_COMMAND_DESTINATION],0
+ 01C0 B01D              jnz L36
+ 01C2                   .dbline 205
+ 01C2           ;                               {
+ 01C2                   .dbline 206
+ 01C2           ;                                       if(COMMAND_SOURCE == assigned_ID)
+ 01C2 62D000            mov REG[0xd0],>_COMMAND_SOURCE
+ 01C5 5100              mov A,[_COMMAND_SOURCE]
+ 01C7 62D000            mov REG[0xd0],>__r0
+ 01CA 5300              mov [__r1],A
+ 01CC 5000              mov A,0
+ 01CE 3BFB              cmp A,[X-5]
+ 01D0 B00D              jnz L38
+ 01D2 5100              mov A,[__r1]
+ 01D4 3BFC              cmp A,[X-4]
+ 01D6 B007              jnz L38
+ 01D8           X7:
+ 01D8                   .dbline 207
+ 01D8           ;                                       {
+ 01D8                   .dbline 208
+ 01D8           ;                                               success = 1;
+ 01D8 560101            mov [X+1],1
+ 01DB 560000            mov [X+0],0
+ 01DE                   .dbline 209
+ 01DE           ;                                       }
+ 01DE           L38:
+ 01DE                   .dbline 210
+ 01DE           ;                               }
+ 01DE           L36:
+ 01DE                   .dbline 211
+ 01DE           ;                       }
+ 01DE           L34:
+ 01DE                   .dbline 212
+ 01DE           ;               }
+ 01DE           L32:
+ 01DE                   .dbline 213
+ 01DE           ;       }
+ 01DE           L30:
+ 01DE                   .dbline 197
+ 01DE 62D000            mov REG[0xd0],>_TIMEOUT
+ 01E1 5101              mov A,[_TIMEOUT+1]
+ 01E3 1103              sub A,3
+ 01E5 5100              mov A,[_TIMEOUT]
+ 01E7 3180              xor A,-128
+ 01E9 1980              sbb A,(0 ^ 0x80)
+ 01EB D00B              jnc L40
+ 01ED           X8:
+ 01ED 3D0000            cmp [X+0],0
+ 01F0 B006              jnz X9
+ 01F2 3D0100            cmp [X+1],0
+ 01F5 AFAD              jz L29
+ 01F7           X9:
+ 01F7           L40:
+ 01F7                   .dbline 215
+ 01F7           ;       
+ 01F7           ;       RX_TIMEOUT_Stop();
+ 01F7 10                push X
+ 01F8 7C0000            xcall _RX_TIMEOUT_Stop
+ 01FB 20                pop X
+ 01FC                   .dbline 216
+ 01FC           ;       TIMEOUT = 0;
+ 01FC 62D000            mov REG[0xd0],>_TIMEOUT
+ 01FF 550100            mov [_TIMEOUT+1],0
+ 0202 550000            mov [_TIMEOUT],0
+ 0205                   .dbline 217
+ 0205           ;       RX_TIMEOUT_Start();
+ 0205 10                push X
+ 0206 7C0000            xcall _RX_TIMEOUT_Start
+ 0209 20                pop X
+ 020A                   .dbline 219
+ 020A           ;       
+ 020A           ;       return success;
+ 020A 62D000            mov REG[0xd0],>__r0
+ 020D 5201              mov A,[X+1]
+ 020F 5300              mov [__r1],A
+ 0211 5200              mov A,[X+0]
+ 0213 5300              mov [__r0],A
+ 0215                   .dbline -2
+ 0215           L25:
+ 0215 38FE              add SP,-2
+ 0217 20                pop X
+ 0218                   .dbline 0 ; func end
+ 0218 7F                ret
+ 0219                   .dbsym l success 0 I
+ 0219                   .dbsym l assigned_ID -5 I
+ 0219                   .dbend
+ 0219                   .dbfunc e clearConfig _clearConfig fV
+ 0219           ;       response -> X+0
+ 0219           _clearConfig::
+ 0219                   .dbline -1
+ 0219 10                push X
+ 021A 4F                mov X,SP
+ 021B 3802              add SP,2
+ 021D                   .dbline 223
+ 021D           ; }
+ 021D           ; 
+ 021D           ; void clearConfig(void)
+ 021D           ; {
+ 021D                   .dbline 224
+ 021D           ;       int response = 0;
+ 021D 560100            mov [X+1],0
+ 0220 560000            mov [X+0],0
+ 0223                   .dbline 226
+ 0223           ;       
+ 0223           ;       configToggle(TX_MODE);  // Toggle into TX mode.
+ 0223 5000              mov A,0
+ 0225 08                push A
+ 0226 08                push A
+ 0227 7C0B6F            xcall _configToggle
+ 022A 38FE              add SP,-2
+ 022C                   .dbline 229
+ 022C           ;                       
+ 022C           ;       // Transmit a clear.
+ 022C           ;       TRANSMIT_PutChar(START_TRANSMIT);
+ 022C 10                push X
+ 022D 50FC              mov A,-4
+ 022F 7C0000            xcall _TRANSMIT_PutChar
+ 0232 20                pop X
+ 0233                   .dbline 230
+ 0233           ;       TRANSMIT_PutChar(START_TRANSMIT);
+ 0233 10                push X
+ 0234 50FC              mov A,-4
+ 0236 7C0000            xcall _TRANSMIT_PutChar
+ 0239 20                pop X
+ 023A                   .dbline 231
+ 023A           ;       TRANSMIT_PutChar(MASTER_ID);
+ 023A 10                push X
+ 023B 5000              mov A,0
+ 023D 7C0000            xcall _TRANSMIT_PutChar
+ 0240 20                pop X
+ 0241                   .dbline 232
+ 0241           ;       TRANSMIT_PutChar(BROADCAST);
+ 0241 10                push X
+ 0242 50FE              mov A,-2
+ 0244 7C0000            xcall _TRANSMIT_PutChar
+ 0247 20                pop X
+ 0248                   .dbline 233
+ 0248           ;       TRANSMIT_PutChar(CLEAR);
+ 0248 10                push X
+ 0249 50CC              mov A,-52
+ 024B 7C0000            xcall _TRANSMIT_PutChar
+ 024E 20                pop X
+ 024F                   .dbline 234
+ 024F           ;       TRANSMIT_PutChar(END_TRANSMIT);
+ 024F 10                push X
+ 0250 50FD              mov A,-3
+ 0252 7C0000            xcall _TRANSMIT_PutChar
+ 0255 20                pop X
+ 0256                   .dbline 235
+ 0256           ;       TRANSMIT_PutChar(END_TRANSMIT);
+ 0256 10                push X
+ 0257 50FD              mov A,-3
+ 0259 7C0000            xcall _TRANSMIT_PutChar
+ 025C 20                pop X
+ 025D           L42:
+ 025D                   .dbline 238
+ 025D           ;       
+ 025D           ;       // Wait for the transmission to finish.
+ 025D           ;       while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
+ 025D           L43:
+ 025D                   .dbline 238
+ 025D 10                push X
+ 025E 7C0000            xcall _TRANSMIT_bReadTxStatus
+ 0261 62D000            mov REG[0xd0],>__r0
+ 0264 20                pop X
+ 0265 5300              mov [__r0],A
+ 0267 470020            tst [__r0],32
+ 026A AFF2              jz L42
+ 026C                   .dbline 240
+ 026C           ;       
+ 026C           ;       xmitWait();
+ 026C 7C0E72            xcall _xmitWait
+ 026F                   .dbline -2
+ 026F           L41:
+ 026F 38FE              add SP,-2
+ 0271 20                pop X
+ 0272                   .dbline 0 ; func end
+ 0272 7F                ret
+ 0273                   .dbsym l response 0 I
+ 0273                   .dbend
+ 0273                   .dbfunc e sayHello _sayHello fV
+ 0273           _sayHello::
+ 0273                   .dbline -1
+ 0273                   .dbline 245
+ 0273           ; }
+ 0273           ; 
+ 0273           ; // This function transmits a hello message.
+ 0273           ; void sayHello(void)
+ 0273           ; {
+ 0273                   .dbline 246
+ 0273           ;       configToggle(TX_MODE);                          // Toggle into TX mode.
+ 0273 5000              mov A,0
+ 0275 08                push A
+ 0276 08                push A
+ 0277 7C0B6F            xcall _configToggle
+ 027A 38FE              add SP,-2
+ 027C                   .dbline 249
+ 027C           ;                       
+ 027C           ;       // Transmit a hello.
+ 027C           ;       TRANSMIT_PutChar(START_TRANSMIT);
+ 027C 10                push X
+ 027D 50FC              mov A,-4
+ 027F 7C0000            xcall _TRANSMIT_PutChar
+ 0282 20                pop X
+ 0283                   .dbline 250
+ 0283           ;       TRANSMIT_PutChar(START_TRANSMIT);
+ 0283 10                push X
+ 0284 50FC              mov A,-4
+ 0286 7C0000            xcall _TRANSMIT_PutChar
+ 0289 20                pop X
+ 028A                   .dbline 251
+ 028A           ;       TRANSMIT_PutChar(MASTER_ID);
+ 028A 10                push X
+ 028B 5000              mov A,0
+ 028D 7C0000            xcall _TRANSMIT_PutChar
+ 0290 20                pop X
+ 0291                   .dbline 252
+ 0291           ;       TRANSMIT_PutChar(BLANK_MODULE_ID);
+ 0291 10                push X
+ 0292 50FB              mov A,-5
+ 0294 7C0000            xcall _TRANSMIT_PutChar
+ 0297 20                pop X
+ 0298                   .dbline 253
+ 0298           ;       TRANSMIT_PutChar(HELLO_BYTE);
+ 0298 10                push X
+ 0299 50C8              mov A,-56
+ 029B 7C0000            xcall _TRANSMIT_PutChar
+ 029E 20                pop X
+ 029F                   .dbline 254
+ 029F           ;       TRANSMIT_PutChar(END_TRANSMIT);
+ 029F 10                push X
+ 02A0 50FD              mov A,-3
+ 02A2 7C0000            xcall _TRANSMIT_PutChar
+ 02A5 20                pop X
+ 02A6                   .dbline 255
+ 02A6           ;       TRANSMIT_PutChar(END_TRANSMIT);
+ 02A6 10                push X
+ 02A7 50FD              mov A,-3
+ 02A9 7C0000            xcall _TRANSMIT_PutChar
+ 02AC 20                pop X
+ 02AD           L46:
+ 02AD                   .dbline 258
+ 02AD           ;       
+ 02AD           ;       // Wait for the transmission to finish.
+ 02AD           ;       while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
+ 02AD           L47:
+ 02AD                   .dbline 258
+ 02AD 10                push X
+ 02AE 7C0000            xcall _TRANSMIT_bReadTxStatus
+ 02B1 62D000            mov REG[0xd0],>__r0
+ 02B4 20                pop X
+ 02B5 5300              mov [__r0],A
+ 02B7 470020            tst [__r0],32
+ 02BA AFF2              jz L46
+ 02BC                   .dbline 260
+ 02BC           ;       
+ 02BC           ;       xmitWait();
+ 02BC 7C0E72            xcall _xmitWait
+ 02BF                   .dbline 262
+ 02BF           ;       
+ 02BF           ;       configToggle(RX_MODE);                          // Listen for the response.
+ 02BF 5000              mov A,0
+ 02C1 08                push A
+ 02C2 5001              mov A,1
+ 02C4 08                push A
+ 02C5 7C0B6F            xcall _configToggle
+ 02C8 38FE              add SP,-2
+ 02CA                   .dbline -2
+ 02CA           L45:
+ 02CA                   .dbline 0 ; func end
+ 02CA 7F                ret
+ 02CB                   .dbend
+ 02CB                   .dbfunc e validTransmission _validTransmission fI
+ 02CB           ; valid_transmit -> X+3
+ 02CB           ;              i -> X+1
+ 02CB           ;       tempByte -> X+0
+ 02CB           _validTransmission::
+ 02CB                   .dbline -1
+ 02CB 10                push X
+ 02CC 4F                mov X,SP
+ 02CD 3805              add SP,5
+ 02CF                   .dbline 267
+ 02CF           ; }
+ 02CF           ; 
+ 02CF           ; // This function returns whether or not a valid transmission has been received.
+ 02CF           ; int validTransmission(void)
+ 02CF           ; {
+ 02CF                   .dbline 268
+ 02CF           ;       int valid_transmit = 0;
+ 02CF 560400            mov [X+4],0
+ 02D2 560300            mov [X+3],0
+ 02D5                   .dbline 269
+ 02D5           ;       int i = 0;
+ 02D5 560200            mov [X+2],0
+ 02D8 560100            mov [X+1],0
+ 02DB                   .dbline 270
+ 02DB           ;       char tempByte = 0;
+ 02DB 560000            mov [X+0],0
+ 02DE 80C2              xjmp L51
+ 02E0           L50:
+ 02E0                   .dbline 273
+ 02E0           ;       
+ 02E0           ;       while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 02E0           ;       {
+ 02E0                   .dbline 274
+ 02E0           ;               if(RECEIVE_cReadChar() == START_TRANSMIT)
+ 02E0 10                push X
+ 02E1 7C0000            xcall _RECEIVE_cReadChar
+ 02E4 62D000            mov REG[0xd0],>__r0
+ 02E7 20                pop X
+ 02E8 39FC              cmp A,-4
+ 02EA B0B6              jnz L53
+ 02EC                   .dbline 275
+ 02EC           ;               {
+ 02EC 80A5              xjmp L56
+ 02EE           L55:
+ 02EE                   .dbline 277
+ 02EE           ;                       while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 02EE           ;                       {
+ 02EE                   .dbline 278
+ 02EE           ;                               if(RECEIVE_cReadChar() == START_TRANSMIT)
+ 02EE 10                push X
+ 02EF 7C0000            xcall _RECEIVE_cReadChar
+ 02F2 62D000            mov REG[0xd0],>__r0
+ 02F5 20                pop X
+ 02F6 39FC              cmp A,-4
+ 02F8 B099              jnz L58
+ 02FA                   .dbline 279
+ 02FA           ;                               {
+ 02FA 8088              xjmp L61
+ 02FC           L60:
+ 02FC                   .dbline 281
+ 02FC           ;                                       while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 02FC           ;                                       {
+ 02FC                   .dbline 282
+ 02FC           ;                                               if(tempByte = RECEIVE_cReadChar())
+ 02FC 10                push X
+ 02FD 7C0000            xcall _RECEIVE_cReadChar
+ 0300 20                pop X
+ 0301 5400              mov [X+0],A
+ 0303 3900              cmp A,0
+ 0305 A07D              jz L63
+ 0307                   .dbline 283
+ 0307           ;                                               {
+ 0307                   .dbline 284
+ 0307           ;                                                       COMMAND_SOURCE = tempByte;
+ 0307 5200              mov A,[X+0]
+ 0309 62D000            mov REG[0xd0],>_COMMAND_SOURCE
+ 030C 5300              mov [_COMMAND_SOURCE],A
+ 030E 8065              xjmp L66
+ 0310           L65:
+ 0310                   .dbline 287
+ 0310           ;                                                       
+ 0310           ;                                                       while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 0310           ;                                                       {
+ 0310                   .dbline 288
+ 0310           ;                                                               if(tempByte = RECEIVE_cReadChar())
+ 0310 10                push X
+ 0311 7C0000            xcall _RECEIVE_cReadChar
+ 0314 62D000            mov REG[0xd0],>__r0
+ 0317 20                pop X
+ 0318 5400              mov [X+0],A
+ 031A 3900              cmp A,0
+ 031C A057              jz L68
+ 031E                   .dbline 289
+ 031E           ;                                                               {
+ 031E                   .dbline 290
+ 031E           ;                                                                       if(tempByte >= HELLO_BYTE)
+ 031E 3D00C8            cmp [X+0],-56
+ 0321 C052              jc L70
+ 0323           X10:
+ 0323                   .dbline 291
+ 0323           ;                                                                       {
+ 0323                   .dbline 292
+ 0323           ;                                                                               COMMAND_TYPE = tempByte;
+ 0323 5200              mov A,[X+0]
+ 0325 62D000            mov REG[0xd0],>_COMMAND_TYPE
+ 0328 5300              mov [_COMMAND_TYPE],A
+ 032A 803A              xjmp L73
+ 032C           L72:
+ 032C                   .dbline 295
+ 032C           ;                                                                               
+ 032C           ;                                                                               while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 032C           ;                                                                               {
+ 032C                   .dbline 296
+ 032C           ;                                                                                       if(tempByte = RECEIVE_cReadChar())
+ 032C 10                push X
+ 032D 7C0000            xcall _RECEIVE_cReadChar
+ 0330 62D000            mov REG[0xd0],>__r0
+ 0333 20                pop X
+ 0334 5400              mov [X+0],A
+ 0336 3900              cmp A,0
+ 0338 A02C              jz L75
+ 033A                   .dbline 297
+ 033A           ;                                                                                       {
+ 033A                   .dbline 298
+ 033A           ;                                                                                               if(tempByte != END_TRANSMIT)
+ 033A 3D00FD            cmp [X+0],-3
+ 033D A018              jz L77
+ 033F                   .dbline 299
+ 033F           ;                                                                                               {
+ 033F                   .dbline 300
+ 033F           ;                                                                                                       PARAM[i] = tempByte;
+ 033F 5202              mov A,[X+2]
+ 0341 0100              add A,<_PARAM
+ 0343 5300              mov [__r1],A
+ 0345 5201              mov A,[X+1]
+ 0347 0900              adc A,>_PARAM
+ 0349 60D5              mov REG[0xd5],A
+ 034B 5200              mov A,[X+0]
+ 034D 3F00              mvi [__r1],A
+ 034F                   .dbline 301
+ 034F           ;                                                                                                       i++;
+ 034F 7702              inc [X+2]
+ 0351 0F0100            adc [X+1],0
+ 0354                   .dbline 302
+ 0354           ;                                                                                               }
+ 0354 8010              xjmp L78
+ 0356           L77:
+ 0356                   .dbline 304
+ 0356           ;                                                                                               else
+ 0356           ;                                                                                               {
+ 0356                   .dbline 305
+ 0356           ;                                                                                                       valid_transmit = 1;
+ 0356 560401            mov [X+4],1
+ 0359 560300            mov [X+3],0
+ 035C                   .dbline 306
+ 035C           ;                                                                                                       TIMEOUT = RX_TIMEOUT_DURATION;
+ 035C 62D000            mov REG[0xd0],>_TIMEOUT
+ 035F 550103            mov [_TIMEOUT+1],3
+ 0362 550000            mov [_TIMEOUT],0
+ 0365                   .dbline 307
+ 0365           ;                                                                                               }
+ 0365           L78:
+ 0365                   .dbline 308
+ 0365           ;                                                                                       }
+ 0365           L75:
+ 0365                   .dbline 309
+ 0365           ;                                                                               }
+ 0365           L73:
+ 0365                   .dbline 294
+ 0365 62D000            mov REG[0xd0],>_TIMEOUT
+ 0368 5101              mov A,[_TIMEOUT+1]
+ 036A 1103              sub A,3
+ 036C 5100              mov A,[_TIMEOUT]
+ 036E 3180              xor A,-128
+ 0370 1980              sbb A,(0 ^ 0x80)
+ 0372 CFB9              jc L72
+ 0374           X11:
+ 0374                   .dbline 310
+ 0374           ;                                                                       }
+ 0374           L70:
+ 0374                   .dbline 311
+ 0374           ;                                                               }
+ 0374           L68:
+ 0374                   .dbline 312
+ 0374           ;                                                       }
+ 0374           L66:
+ 0374                   .dbline 286
+ 0374 62D000            mov REG[0xd0],>_TIMEOUT
+ 0377 5101              mov A,[_TIMEOUT+1]
+ 0379 1103              sub A,3
+ 037B 5100              mov A,[_TIMEOUT]
+ 037D 3180              xor A,-128
+ 037F 1980              sbb A,(0 ^ 0x80)
+ 0381 CF8E              jc L65
+ 0383           X12:
+ 0383                   .dbline 313
+ 0383           ;                                               }
+ 0383           L63:
+ 0383                   .dbline 314
+ 0383           ;                                       }
+ 0383           L61:
+ 0383                   .dbline 280
+ 0383 62D000            mov REG[0xd0],>_TIMEOUT
+ 0386 5101              mov A,[_TIMEOUT+1]
+ 0388 1103              sub A,3
+ 038A 5100              mov A,[_TIMEOUT]
+ 038C 3180              xor A,-128
+ 038E 1980              sbb A,(0 ^ 0x80)
+ 0390 CF6B              jc L60
+ 0392           X13:
+ 0392                   .dbline 315
+ 0392           ;                               }
+ 0392           L58:
+ 0392                   .dbline 316
+ 0392           ;                       }
+ 0392           L56:
+ 0392                   .dbline 276
+ 0392 62D000            mov REG[0xd0],>_TIMEOUT
+ 0395 5101              mov A,[_TIMEOUT+1]
+ 0397 1103              sub A,3
+ 0399 5100              mov A,[_TIMEOUT]
+ 039B 3180              xor A,-128
+ 039D 1980              sbb A,(0 ^ 0x80)
+ 039F CF4E              jc L55
+ 03A1           X14:
+ 03A1                   .dbline 317
+ 03A1           ;               }
+ 03A1           L53:
+ 03A1                   .dbline 318
+ 03A1           ;       }
+ 03A1           L51:
+ 03A1                   .dbline 272
+ 03A1 62D000            mov REG[0xd0],>_TIMEOUT
+ 03A4 5101              mov A,[_TIMEOUT+1]
+ 03A6 1103              sub A,3
+ 03A8 5100              mov A,[_TIMEOUT]
+ 03AA 3180              xor A,-128
+ 03AC 1980              sbb A,(0 ^ 0x80)
+ 03AE CF31              jc L50
+ 03B0           X15:
+ 03B0                   .dbline 320
+ 03B0           ;       
+ 03B0           ;       return valid_transmit;
+ 03B0 62D000            mov REG[0xd0],>__r0
+ 03B3 5204              mov A,[X+4]
+ 03B5 5300              mov [__r1],A
+ 03B7 5203              mov A,[X+3]
+ 03B9 5300              mov [__r0],A
+ 03BB                   .dbline -2
+ 03BB           L49:
+ 03BB 38FB              add SP,-5
+ 03BD 20                pop X
+ 03BE                   .dbline 0 ; func end
+ 03BE 7F                ret
+ 03BF                   .dbsym l valid_transmit 3 I
+ 03BF                   .dbsym l i 1 I
+ 03BF                   .dbsym l tempByte 0 c
+ 03BF                   .dbend
+ 03BF                   .dbfunc e decodeTransmission _decodeTransmission fV
+ 03BF           ;          speed -> X+10
+ 03BF           ;          angle -> X+8
+ 03BF           ;       tempByte -> X+7
+ 03BF           ;          total -> X+5
+ 03BF           ;             ID -> X+4
+ 03BF           ;   runningTotal -> X+2
+ 03BF           ;          param -> X+0
+ 03BF           _decodeTransmission::
+ 03BF                   .dbline -1
+ 03BF 10                push X
+ 03C0 4F                mov X,SP
+ 03C1 380C              add SP,12
+ 03C3                   .dbline 325
+ 03C3           ; }
+ 03C3           ; 
+ 03C3           ; // This function decodes the transmission and takes the correct action.
+ 03C3           ; void decodeTransmission(void)
+ 03C3           ; {
+ 03C3                   .dbline 327
+ 03C3           ;       char* param;
+ 03C3           ;       char ID = 0;
+ 03C3 560400            mov [X+4],0
+ 03C6                   .dbline 331
+ 03C6           ;       char tempByte;
+ 03C6           ;       char angle[2];
+ 03C6           ;       char speed[2];
+ 03C6           ;       int total = 0;
+ 03C6 560600            mov [X+6],0
+ 03C9 560500            mov [X+5],0
+ 03CC                   .dbline 332
+ 03CC           ;       int runningTotal = 0;
+ 03CC 560300            mov [X+3],0
+ 03CF 560200            mov [X+2],0
+ 03D2                   .dbline 334
+ 03D2           ;       
+ 03D2           ;       if(param = COMP_SERIAL_szGetParam())
+ 03D2 10                push X
+ 03D3 7C0000            xcall _COMP_SERIAL_szGetParam
+ 03D6 62D000            mov REG[0xd0],>__r0
+ 03D9 5300              mov [__r0],A
+ 03DB 5A00              mov [__r1],X
+ 03DD 20                pop X
+ 03DE 5100              mov A,[__r1]
+ 03E0 5401              mov [X+1],A
+ 03E2 5100              mov A,[__r0]
+ 03E4 5400              mov [X+0],A
+ 03E6 3C0000            cmp [__r0],0
+ 03E9 B006              jnz X16
+ 03EB 3C0000            cmp [__r1],0
+ 03EE A601              jz L80
+ 03F0           X16:
+ 03F0                   .dbline 335
+ 03F0           ;       {
+ 03F0                   .dbline 336
+ 03F0           ;               if((param[0] == 'x') || (param[0] == 'X'))
+ 03F0 62D000            mov REG[0xd0],>__r0
+ 03F3 5201              mov A,[X+1]
+ 03F5 5300              mov [__r1],A
+ 03F7 5200              mov A,[X+0]
+ 03F9 60D4              mov REG[0xd4],A
+ 03FB 3E00              mvi A,[__r1]
+ 03FD 5300              mov [__r1],A
+ 03FF 550000            mov [__r0],0
+ 0402 3C0000            cmp [__r0],0
+ 0405 B005              jnz X17
+ 0407 3978              cmp A,120
+ 0409 A00E              jz L84
+ 040B           X17:
+ 040B 62D000            mov REG[0xd0],>__r0
+ 040E 3C0000            cmp [__r0],0
+ 0411 B011              jnz L82
+ 0413 3C0058            cmp [__r1],88
+ 0416 B00C              jnz L82
+ 0418           X18:
+ 0418           L84:
+ 0418                   .dbline 337
+ 0418           ;               {
+ 0418                   .dbline 339
+ 0418           ;                       // Reset
+ 0418           ;                       NUM_MODULES = 0;
+ 0418 62D000            mov REG[0xd0],>_NUM_MODULES
+ 041B 550100            mov [_NUM_MODULES+1],0
+ 041E 550000            mov [_NUM_MODULES],0
+ 0421                   .dbline 340
+ 0421           ;               }
+ 0421 85CE              xjmp L83
+ 0423           L82:
+ 0423                   .dbline 341
+ 0423           ;               else if((param[0] == 'n') || (param[0] == 'N'))
+ 0423 62D000            mov REG[0xd0],>__r0
+ 0426 5201              mov A,[X+1]
+ 0428 5300              mov [__r1],A
+ 042A 5200              mov A,[X+0]
+ 042C 60D4              mov REG[0xd4],A
+ 042E 3E00              mvi A,[__r1]
+ 0430 5300              mov [__r1],A
+ 0432 550000            mov [__r0],0
+ 0435 3C0000            cmp [__r0],0
+ 0438 B005              jnz X19
+ 043A 396E              cmp A,110
+ 043C A00E              jz L87
+ 043E           X19:
+ 043E 62D000            mov REG[0xd0],>__r0
+ 0441 3C0000            cmp [__r0],0
+ 0444 B035              jnz L85
+ 0446 3C004E            cmp [__r1],78
+ 0449 B030              jnz L85
+ 044B           X20:
+ 044B           L87:
+ 044B                   .dbline 342
+ 044B           ;               {
+ 044B                   .dbline 343
+ 044B           ;                       itoa(param,NUM_MODULES,10);
+ 044B 5000              mov A,0
+ 044D 08                push A
+ 044E 500A              mov A,10
+ 0450 08                push A
+ 0451 62D000            mov REG[0xd0],>_NUM_MODULES
+ 0454 5100              mov A,[_NUM_MODULES]
+ 0456 08                push A
+ 0457 5101              mov A,[_NUM_MODULES+1]
+ 0459 08                push A
+ 045A 5200              mov A,[X+0]
+ 045C 08                push A
+ 045D 5201              mov A,[X+1]
+ 045F 08                push A
+ 0460 7C0000            xcall _itoa
+ 0463 38FA              add SP,-6
+ 0465                   .dbline 344
+ 0465           ;                       COMP_SERIAL_PutString(param);
+ 0465 10                push X
+ 0466 5200              mov A,[X+0]
+ 0468 08                push A
+ 0469 5201              mov A,[X+1]
+ 046B 5C                mov X,A
+ 046C 18                pop A
+ 046D 7C0000            xcall _COMP_SERIAL_PutString
+ 0470 20                pop X
+ 0471                   .dbline 345
+ 0471           ;                       COMP_SERIAL_PutChar('\n');
+ 0471 10                push X
+ 0472 500A              mov A,10
+ 0474 7C0000            xcall _COMP_SERIAL_PutChar
+ 0477 20                pop X
+ 0478                   .dbline 346
+ 0478           ;               }
+ 0478 8577              xjmp L86
+ 047A           L85:
+ 047A                   .dbline 347
+ 047A           ;               else if((param[0] == 'w') || (param[0] == 'W'))
+ 047A 62D000            mov REG[0xd0],>__r0
+ 047D 5201              mov A,[X+1]
+ 047F 5300              mov [__r1],A
+ 0481 5200              mov A,[X+0]
+ 0483 60D4              mov REG[0xd4],A
+ 0485 3E00              mvi A,[__r1]
+ 0487 5300              mov [__r1],A
+ 0489 550000            mov [__r0],0
+ 048C 3C0000            cmp [__r0],0
+ 048F B005              jnz X21
+ 0491 3977              cmp A,119
+ 0493 A00E              jz L90
+ 0495           X21:
+ 0495 62D000            mov REG[0xd0],>__r0
+ 0498 3C0000            cmp [__r0],0
+ 049B B214              jnz L88
+ 049D 3C0057            cmp [__r1],87
+ 04A0 B20F              jnz L88
+ 04A2           X22:
+ 04A2           L90:
+ 04A2                   .dbline 348
+ 04A2           ;               {
+ 04A2                   .dbline 349
+ 04A2           ;                       if(param = COMP_SERIAL_szGetParam())
+ 04A2 10                push X
+ 04A3 7C0000            xcall _COMP_SERIAL_szGetParam
+ 04A6 62D000            mov REG[0xd0],>__r0
+ 04A9 5300              mov [__r0],A
+ 04AB 5A00              mov [__r1],X
+ 04AD 20                pop X
+ 04AE 5100              mov A,[__r1]
+ 04B0 5401              mov [X+1],A
+ 04B2 5100              mov A,[__r0]
+ 04B4 5400              mov [X+0],A
+ 04B6 3C0000            cmp [__r0],0
+ 04B9 B006              jnz X23
+ 04BB 3C0000            cmp [__r1],0
+ 04BE A531              jz L89
+ 04C0           X23:
+ 04C0                   .dbline 350
+ 04C0           ;                       {
+ 04C0                   .dbline 351
+ 04C0           ;                               ID = atoi(param);
+ 04C0 5200              mov A,[X+0]
+ 04C2 08                push A
+ 04C3 5201              mov A,[X+1]
+ 04C5 08                push A
+ 04C6 7C0000            xcall _atoi
+ 04C9 38FE              add SP,-2
+ 04CB 62D000            mov REG[0xd0],>__r0
+ 04CE 5100              mov A,[__r1]
+ 04D0 5404              mov [X+4],A
+ 04D2                   .dbline 353
+ 04D2           ;                               
+ 04D2           ;                               if(param = COMP_SERIAL_szGetParam())
+ 04D2 10                push X
+ 04D3 7C0000            xcall _COMP_SERIAL_szGetParam
+ 04D6 62D000            mov REG[0xd0],>__r0
+ 04D9 5300              mov [__r0],A
+ 04DB 5A00              mov [__r1],X
+ 04DD 20                pop X
+ 04DE 5100              mov A,[__r1]
+ 04E0 5401              mov [X+1],A
+ 04E2 5100              mov A,[__r0]
+ 04E4 5400              mov [X+0],A
+ 04E6 3C0000            cmp [__r0],0
+ 04E9 B006              jnz X24
+ 04EB 3C0000            cmp [__r1],0
+ 04EE A501              jz L89
+ 04F0           X24:
+ 04F0                   .dbline 354
+ 04F0           ;                               {
+ 04F0                   .dbline 355
+ 04F0           ;                                       if((param[0] == 'a') || (param[0] == 'A'))
+ 04F0 62D000            mov REG[0xd0],>__r0
+ 04F3 5201              mov A,[X+1]
+ 04F5 5300              mov [__r1],A
+ 04F7 5200              mov A,[X+0]
+ 04F9 60D4              mov REG[0xd4],A
+ 04FB 3E00              mvi A,[__r1]
+ 04FD 5300              mov [__r1],A
+ 04FF 550000            mov [__r0],0
+ 0502 3C0000            cmp [__r0],0
+ 0505 B005              jnz X25
+ 0507 3961              cmp A,97
+ 0509 A00E              jz L97
+ 050B           X25:
+ 050B 62D000            mov REG[0xd0],>__r0
+ 050E 3C0000            cmp [__r0],0
+ 0511 B084              jnz L95
+ 0513 3C0041            cmp [__r1],65
+ 0516 B07F              jnz L95
+ 0518           X26:
+ 0518           L97:
+ 0518                   .dbline 356
+ 0518           ;                                       {
+ 0518                   .dbline 357
+ 0518           ;                                               if(param = COMP_SERIAL_szGetParam())
+ 0518 10                push X
+ 0519 7C0000            xcall _COMP_SERIAL_szGetParam
+ 051C 62D000            mov REG[0xd0],>__r0
+ 051F 5300              mov [__r0],A
+ 0521 5A00              mov [__r1],X
+ 0523 20                pop X
+ 0524 5100              mov A,[__r1]
+ 0526 5401              mov [X+1],A
+ 0528 5100              mov A,[__r0]
+ 052A 5400              mov [X+0],A
+ 052C 3C0000            cmp [__r0],0
+ 052F B006              jnz X27
+ 0531 3C0000            cmp [__r1],0
+ 0534 A4BB              jz L89
+ 0536           X27:
+ 0536                   .dbline 358
+ 0536           ;                                               {
+ 0536                   .dbline 359
+ 0536           ;                                                       total = atoi(param);
+ 0536 5200              mov A,[X+0]
+ 0538 08                push A
+ 0539 5201              mov A,[X+1]
+ 053B 08                push A
+ 053C 7C0000            xcall _atoi
+ 053F 38FE              add SP,-2
+ 0541 62D000            mov REG[0xd0],>__r0
+ 0544 5100              mov A,[__r1]
+ 0546 5406              mov [X+6],A
+ 0548 5100              mov A,[__r0]
+ 054A 5405              mov [X+5],A
+ 054C                   .dbline 360
+ 054C           ;                                                       angle[0] = total%256;
+ 054C 5001              mov A,1
+ 054E 08                push A
+ 054F 5000              mov A,0
+ 0551 08                push A
+ 0552 5205              mov A,[X+5]
+ 0554 08                push A
+ 0555 5206              mov A,[X+6]
+ 0557 08                push A
+ 0558 7C0000            xcall __divmod_16X16_16
+ 055B 38FE              add SP,-2
+ 055D 18                pop A
+ 055E 5300              mov [__r1],A
+ 0560 18                pop A
+ 0561 5100              mov A,[__r1]
+ 0563 5408              mov [X+8],A
+ 0565                   .dbline 361
+ 0565           ;                                                       angle[1] = total/256;
+ 0565 5001              mov A,1
+ 0567 08                push A
+ 0568 5000              mov A,0
+ 056A 08                push A
+ 056B 5205              mov A,[X+5]
+ 056D 08                push A
+ 056E 5206              mov A,[X+6]
+ 0570 08                push A
+ 0571 7C0000            xcall __divmod_16X16_16
+ 0574 18                pop A
+ 0575 5300              mov [__r1],A
+ 0577 18                pop A
+ 0578 38FE              add SP,-2
+ 057A 5100              mov A,[__r1]
+ 057C 5409              mov [X+9],A
+ 057E                   .dbline 362
+ 057E           ;                                                       longServoInstruction(ID,5,WRITE_SERVO,30,angle[0],angle[1]);
+ 057E 5209              mov A,[X+9]
+ 0580 08                push A
+ 0581 5208              mov A,[X+8]
+ 0583 08                push A
+ 0584 501E              mov A,30
+ 0586 08                push A
+ 0587 5003              mov A,3
+ 0589 08                push A
+ 058A 5005              mov A,5
+ 058C 08                push A
+ 058D 5204              mov A,[X+4]
+ 058F 08                push A
+ 0590 952C              xcall _longServoInstruction
+ 0592 38FA              add SP,-6
+ 0594                   .dbline 363
+ 0594           ;                                               }
+ 0594                   .dbline 364
+ 0594           ;                                       }
+ 0594 845B              xjmp L89
+ 0596           L95:
+ 0596                   .dbline 365
+ 0596           ;                                       else if((param[0] == 'p') || (param[0] == 'P'))
+ 0596 62D000            mov REG[0xd0],>__r0
+ 0599 5201              mov A,[X+1]
+ 059B 5300              mov [__r1],A
+ 059D 5200              mov A,[X+0]
+ 059F 60D4              mov REG[0xd4],A
+ 05A1 3E00              mvi A,[__r1]
+ 05A3 5300              mov [__r1],A
+ 05A5 550000            mov [__r0],0
+ 05A8 3C0000            cmp [__r0],0
+ 05AB B005              jnz X28
+ 05AD 3970              cmp A,112
+ 05AF A00E              jz L104
+ 05B1           X28:
+ 05B1 62D000            mov REG[0xd0],>__r0
+ 05B4 3C0000            cmp [__r0],0
+ 05B7 B045              jnz L102
+ 05B9 3C0050            cmp [__r1],80
+ 05BC B040              jnz L102
+ 05BE           X29:
+ 05BE           L104:
+ 05BE                   .dbline 366
+ 05BE           ;                                       {
+ 05BE                   .dbline 367
+ 05BE           ;                                               if(param = COMP_SERIAL_szGetParam())
+ 05BE 10                push X
+ 05BF 7C0000            xcall _COMP_SERIAL_szGetParam
+ 05C2 62D000            mov REG[0xd0],>__r0
+ 05C5 5300              mov [__r0],A
+ 05C7 5A00              mov [__r1],X
+ 05C9 20                pop X
+ 05CA 5100              mov A,[__r1]
+ 05CC 5401              mov [X+1],A
+ 05CE 5100              mov A,[__r0]
+ 05D0 5400              mov [X+0],A
+ 05D2 3C0000            cmp [__r0],0
+ 05D5 B006              jnz X30
+ 05D7 3C0000            cmp [__r1],0
+ 05DA A415              jz L89
+ 05DC           X30:
+ 05DC                   .dbline 368
+ 05DC           ;                                               {
+ 05DC                   .dbline 369
+ 05DC           ;                                                       servoInstruction(ID,4,WRITE_SERVO,24,atoi(param));
+ 05DC 5200              mov A,[X+0]
+ 05DE 08                push A
+ 05DF 5201              mov A,[X+1]
+ 05E1 08                push A
+ 05E2 7C0000            xcall _atoi
+ 05E5 62D000            mov REG[0xd0],>__r0
+ 05E8 5100              mov A,[__r1]
+ 05EA 08                push A
+ 05EB 5018              mov A,24
+ 05ED 08                push A
+ 05EE 5003              mov A,3
+ 05F0 08                push A
+ 05F1 5004              mov A,4
+ 05F3 08                push A
+ 05F4 5204              mov A,[X+4]
+ 05F6 08                push A
+ 05F7 9422              xcall _servoInstruction
+ 05F9 38F9              add SP,-7
+ 05FB                   .dbline 370
+ 05FB           ;                                               }
+ 05FB                   .dbline 371
+ 05FB           ;                                       }
+ 05FB 83F4              xjmp L89
+ 05FD           L102:
+ 05FD                   .dbline 372
+ 05FD           ;                                       else if((param[0] == 's') || (param[0] == 'S'))
+ 05FD 62D000            mov REG[0xd0],>__r0
+ 0600 5201              mov A,[X+1]
+ 0602 5300              mov [__r1],A
+ 0604 5200              mov A,[X+0]
+ 0606 60D4              mov REG[0xd4],A
+ 0608 3E00              mvi A,[__r1]
+ 060A 5300              mov [__r1],A
+ 060C 550000            mov [__r0],0
+ 060F 3C0000            cmp [__r0],0
+ 0612 B005              jnz X31
+ 0614 3973              cmp A,115
+ 0616 A00E              jz L109
+ 0618           X31:
+ 0618 62D000            mov REG[0xd0],>__r0
+ 061B 3C0000            cmp [__r0],0
+ 061E B3D1              jnz L89
+ 0620 3C0053            cmp [__r1],83
+ 0623 B3CC              jnz L89
+ 0625           X32:
+ 0625           L109:
+ 0625                   .dbline 373
+ 0625           ;                                       {
+ 0625                   .dbline 374
+ 0625           ;                                               if(param = COMP_SERIAL_szGetParam())
+ 0625 10                push X
+ 0626 7C0000            xcall _COMP_SERIAL_szGetParam
+ 0629 62D000            mov REG[0xd0],>__r0
+ 062C 5300              mov [__r0],A
+ 062E 5A00              mov [__r1],X
+ 0630 20                pop X
+ 0631 5100              mov A,[__r1]
+ 0633 5401              mov [X+1],A
+ 0635 5100              mov A,[__r0]
+ 0637 5400              mov [X+0],A
+ 0639 3C0000            cmp [__r0],0
+ 063C B006              jnz X33
+ 063E 3C0000            cmp [__r1],0
+ 0641 A3AE              jz L89
+ 0643           X33:
+ 0643                   .dbline 375
+ 0643           ;                                               {
+ 0643                   .dbline 376
+ 0643           ;                                                       total = atoi(param);
+ 0643 5200              mov A,[X+0]
+ 0645 08                push A
+ 0646 5201              mov A,[X+1]
+ 0648 08                push A
+ 0649 7C0000            xcall _atoi
+ 064C 38FE              add SP,-2
+ 064E 62D000            mov REG[0xd0],>__r0
+ 0651 5100              mov A,[__r1]
+ 0653 5406              mov [X+6],A
+ 0655 5100              mov A,[__r0]
+ 0657 5405              mov [X+5],A
+ 0659                   .dbline 379
+ 0659           ;                                                       
+ 0659           ;                                                       // If no total, do nothing because 0 is no speed control (undesired).
+ 0659           ;                                                       if(total)
+ 0659 3D0500            cmp [X+5],0
+ 065C B006              jnz X34
+ 065E 3D0600            cmp [X+6],0
+ 0661 A38E              jz L89
+ 0663           X34:
+ 0663                   .dbline 380
+ 0663           ;                                                       {
+ 0663                   .dbline 381
+ 0663           ;                                                               speed[0] = total%256;
+ 0663 62D000            mov REG[0xd0],>__r0
+ 0666 5001              mov A,1
+ 0668 08                push A
+ 0669 5000              mov A,0
+ 066B 08                push A
+ 066C 5205              mov A,[X+5]
+ 066E 08                push A
+ 066F 5206              mov A,[X+6]
+ 0671 08                push A
+ 0672 7C0000            xcall __divmod_16X16_16
+ 0675 38FE              add SP,-2
+ 0677 18                pop A
+ 0678 5300              mov [__r1],A
+ 067A 18                pop A
+ 067B 5100              mov A,[__r1]
+ 067D 540A              mov [X+10],A
+ 067F                   .dbline 382
+ 067F           ;                                                               speed[1] = total/256;
+ 067F 5001              mov A,1
+ 0681 08                push A
+ 0682 5000              mov A,0
+ 0684 08                push A
+ 0685 5205              mov A,[X+5]
+ 0687 08                push A
+ 0688 5206              mov A,[X+6]
+ 068A 08                push A
+ 068B 7C0000            xcall __divmod_16X16_16
+ 068E 18                pop A
+ 068F 5300              mov [__r1],A
+ 0691 18                pop A
+ 0692 38FE              add SP,-2
+ 0694 5100              mov A,[__r1]
+ 0696 540B              mov [X+11],A
+ 0698                   .dbline 383
+ 0698           ;                                                               longServoInstruction(ID,5,WRITE_SERVO,32,speed[0],speed[1]);
+ 0698 520B              mov A,[X+11]
+ 069A 08                push A
+ 069B 520A              mov A,[X+10]
+ 069D 08                push A
+ 069E 5020              mov A,32
+ 06A0 08                push A
+ 06A1 5003              mov A,3
+ 06A3 08                push A
+ 06A4 5005              mov A,5
+ 06A6 08                push A
+ 06A7 5204              mov A,[X+4]
+ 06A9 08                push A
+ 06AA 9412              xcall _longServoInstruction
+ 06AC 38FA              add SP,-6
+ 06AE                   .dbline 384
+ 06AE           ;                                                       }
+ 06AE                   .dbline 385
+ 06AE           ;                                               }
+ 06AE                   .dbline 386
+ 06AE           ;                                       }
+ 06AE                   .dbline 387
+ 06AE           ;                               }
+ 06AE                   .dbline 388
+ 06AE           ;                       }
+ 06AE                   .dbline 389
+ 06AE           ;               }
+ 06AE 8341              xjmp L89
+ 06B0           L88:
+ 06B0                   .dbline 390
+ 06B0           ;               else if((param[0] == 'r') || (param[0] == 'R'))
+ 06B0 62D000            mov REG[0xd0],>__r0
+ 06B3 5201              mov A,[X+1]
+ 06B5 5300              mov [__r1],A
+ 06B7 5200              mov A,[X+0]
+ 06B9 60D4              mov REG[0xd4],A
+ 06BB 3E00              mvi A,[__r1]
+ 06BD 5300              mov [__r1],A
+ 06BF 550000            mov [__r0],0
+ 06C2 3C0000            cmp [__r0],0
+ 06C5 B005              jnz X35
+ 06C7 3972              cmp A,114
+ 06C9 A00E              jz L118
+ 06CB           X35:
+ 06CB 62D000            mov REG[0xd0],>__r0
+ 06CE 3C0000            cmp [__r0],0
+ 06D1 B31E              jnz L116
+ 06D3 3C0052            cmp [__r1],82
+ 06D6 B319              jnz L116
+ 06D8           X36:
+ 06D8           L118:
+ 06D8                   .dbline 391
+ 06D8           ;               {                       
+ 06D8                   .dbline 392
+ 06D8           ;                       if(param = COMP_SERIAL_szGetParam())
+ 06D8 10                push X
+ 06D9 7C0000            xcall _COMP_SERIAL_szGetParam
+ 06DC 62D000            mov REG[0xd0],>__r0
+ 06DF 5300              mov [__r0],A
+ 06E1 5A00              mov [__r1],X
+ 06E3 20                pop X
+ 06E4 5100              mov A,[__r1]
+ 06E6 5401              mov [X+1],A
+ 06E8 5100              mov A,[__r0]
+ 06EA 5400              mov [X+0],A
+ 06EC 3C0000            cmp [__r0],0
+ 06EF B006              jnz X37
+ 06F1 3C0000            cmp [__r1],0
+ 06F4 A2FB              jz L119
+ 06F6           X37:
+ 06F6                   .dbline 393
+ 06F6           ;                       {
+ 06F6                   .dbline 394
+ 06F6           ;                               ID = atoi(param);
+ 06F6 5200              mov A,[X+0]
+ 06F8 08                push A
+ 06F9 5201              mov A,[X+1]
+ 06FB 08                push A
+ 06FC 7C0000            xcall _atoi
+ 06FF 38FE              add SP,-2
+ 0701 62D000            mov REG[0xd0],>__r0
+ 0704 5100              mov A,[__r1]
+ 0706 5404              mov [X+4],A
+ 0708                   .dbline 395
+ 0708           ;                               if(param = COMP_SERIAL_szGetParam())
+ 0708 10                push X
+ 0709 7C0000            xcall _COMP_SERIAL_szGetParam
+ 070C 62D000            mov REG[0xd0],>__r0
+ 070F 5300              mov [__r0],A
+ 0711 5A00              mov [__r1],X
+ 0713 20                pop X
+ 0714 5100              mov A,[__r1]
+ 0716 5401              mov [X+1],A
+ 0718 5100              mov A,[__r0]
+ 071A 5400              mov [X+0],A
+ 071C 3C0000            cmp [__r0],0
+ 071F B006              jnz X38
+ 0721 3C0000            cmp [__r1],0
+ 0724 A2CB              jz L121
+ 0726           X38:
+ 0726                   .dbline 396
+ 0726           ;                               {
+ 0726                   .dbline 397
+ 0726           ;                                       if((param[0] == 'a') || (param[0] == 'A'))
+ 0726 62D000            mov REG[0xd0],>__r0
+ 0729 5201              mov A,[X+1]
+ 072B 5300              mov [__r1],A
+ 072D 5200              mov A,[X+0]
+ 072F 60D4              mov REG[0xd4],A
+ 0731 3E00              mvi A,[__r1]
+ 0733 5300              mov [__r1],A
+ 0735 550000            mov [__r0],0
+ 0738 3C0000            cmp [__r0],0
+ 073B B005              jnz X39
+ 073D 3961              cmp A,97
+ 073F A00E              jz L125
+ 0741           X39:
+ 0741 62D000            mov REG[0xd0],>__r0
+ 0744 3C0000            cmp [__r0],0
+ 0747 B0D1              jnz L123
+ 0749 3C0041            cmp [__r1],65
+ 074C B0CC              jnz L123
+ 074E           X40:
+ 074E           L125:
+ 074E                   .dbline 398
+ 074E           ;                                       {
+ 074E                   .dbline 399
+ 074E           ;                                               angle[0] = 0;
+ 074E 560800            mov [X+8],0
+ 0751                   .dbline 400
+ 0751           ;                                               angle[1] = 0;
+ 0751 560900            mov [X+9],0
+ 0754                   .dbline 402
+ 0754           ;                                               
+ 0754           ;                                               servoInstruction(ID,4,READ_SERVO,36,2);
+ 0754 5002              mov A,2
+ 0756 08                push A
+ 0757 5024              mov A,36
+ 0759 08                push A
+ 075A 5002              mov A,2
+ 075C 08                push A
+ 075D 5004              mov A,4
+ 075F 08                push A
+ 0760 5204              mov A,[X+4]
+ 0762 08                push A
+ 0763 92B6              xcall _servoInstruction
+ 0765                   .dbline 403
+ 0765           ;                                               configToggle(RX_MODE);
+ 0765 5000              mov A,0
+ 0767 08                push A
+ 0768 5001              mov A,1
+ 076A 08                push A
+ 076B 9402              xcall _configToggle
+ 076D 38F9              add SP,-7
+ 076F 8098              xjmp L128
+ 0771           L127:
+ 0771                   .dbline 407
+ 0771           ;                                                       
+ 0771           ;                                               // Loop until we read a response or time out.
+ 0771           ;                                               while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 0771           ;                                               {
+ 0771                   .dbline 408
+ 0771           ;                                                       if(RECEIVE_cReadChar() == ID)
+ 0771 10                push X
+ 0772 7C0000            xcall _RECEIVE_cReadChar
+ 0775 62D000            mov REG[0xd0],>__r0
+ 0778 20                pop X
+ 0779 3B04              cmp A,[X+4]
+ 077B B08C              jnz L130
+ 077D                   .dbline 409
+ 077D           ;                                                       {
+ 077D 807B              xjmp L133
+ 077F           L132:
+ 077F                   .dbline 411
+ 077F           ;                                                               while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 077F           ;                                                               {
+ 077F                   .dbline 412
+ 077F           ;                                                                       if(RECEIVE_cReadChar() == 4)
+ 077F 10                push X
+ 0780 7C0000            xcall _RECEIVE_cReadChar
+ 0783 62D000            mov REG[0xd0],>__r0
+ 0786 20                pop X
+ 0787 3904              cmp A,4
+ 0789 B06F              jnz L135
+ 078B                   .dbline 413
+ 078B           ;                                                                       {
+ 078B                   .dbline 414
+ 078B           ;                                                                               if(RECEIVE_cGetChar() == 0)
+ 078B 10                push X
+ 078C 7C0000            xcall _RECEIVE_cGetChar
+ 078F 62D000            mov REG[0xd0],>__r0
+ 0792 20                pop X
+ 0793 3900              cmp A,0
+ 0795 B05A              jnz L137
+ 0797                   .dbline 415
+ 0797           ;                                                                               {
+ 0797                   .dbline 416
+ 0797           ;                                                                                       angle[0] = RECEIVE_cGetChar();
+ 0797 10                push X
+ 0798 7C0000            xcall _RECEIVE_cGetChar
+ 079B 62D000            mov REG[0xd0],>__r0
+ 079E 20                pop X
+ 079F 5408              mov [X+8],A
+ 07A1                   .dbline 417
+ 07A1           ;                                                                                       angle[1] = RECEIVE_cGetChar();
+ 07A1 10                push X
+ 07A2 7C0000            xcall _RECEIVE_cGetChar
+ 07A5 62D000            mov REG[0xd0],>__r0
+ 07A8 20                pop X
+ 07A9 5409              mov [X+9],A
+ 07AB                   .dbline 419
+ 07AB           ;                                                                                       
+ 07AB           ;                                                                                       configToggle(PC_MODE);
+ 07AB 5000              mov A,0
+ 07AD 08                push A
+ 07AE 5002              mov A,2
+ 07B0 08                push A
+ 07B1 93BC              xcall _configToggle
+ 07B3                   .dbline 421
+ 07B3           ;                                                                                       
+ 07B3           ;                                                                                       total = ((angle[1])*256) + angle[0];
+ 07B3 5208              mov A,[X+8]
+ 07B5 5406              mov [X+6],A
+ 07B7 5209              mov A,[X+9]
+ 07B9 5405              mov [X+5],A
+ 07BB                   .dbline 422
+ 07BB           ;                                                                                       itoa(param,total,10);
+ 07BB 5000              mov A,0
+ 07BD 08                push A
+ 07BE 500A              mov A,10
+ 07C0 08                push A
+ 07C1 5205              mov A,[X+5]
+ 07C3 08                push A
+ 07C4 5206              mov A,[X+6]
+ 07C6 08                push A
+ 07C7 5200              mov A,[X+0]
+ 07C9 08                push A
+ 07CA 5201              mov A,[X+1]
+ 07CC 08                push A
+ 07CD 7C0000            xcall _itoa
+ 07D0 38F8              add SP,-8
+ 07D2                   .dbline 423
+ 07D2           ;                                                                                       COMP_SERIAL_PutString(param);
+ 07D2 10                push X
+ 07D3 5200              mov A,[X+0]
+ 07D5 08                push A
+ 07D6 5201              mov A,[X+1]
+ 07D8 5C                mov X,A
+ 07D9 18                pop A
+ 07DA 7C0000            xcall _COMP_SERIAL_PutString
+ 07DD 20                pop X
+ 07DE                   .dbline 424
+ 07DE           ;                                                                                       COMP_SERIAL_PutChar('\n');
+ 07DE 10                push X
+ 07DF 500A              mov A,10
+ 07E1 7C0000            xcall _COMP_SERIAL_PutChar
+ 07E4 20                pop X
+ 07E5                   .dbline 426
+ 07E5           ; 
+ 07E5           ;                                                                                       TIMEOUT = RX_TIMEOUT_DURATION;
+ 07E5 62D000            mov REG[0xd0],>_TIMEOUT
+ 07E8 550103            mov [_TIMEOUT+1],3
+ 07EB 550000            mov [_TIMEOUT],0
+ 07EE                   .dbline 427
+ 07EE           ;                                                                               }
+ 07EE 800A              xjmp L138
+ 07F0           L137:
+ 07F0                   .dbline 429
+ 07F0           ;                                                                               else
+ 07F0           ;                                                                               {
+ 07F0                   .dbline 430
+ 07F0           ;                                                                                       TIMEOUT = RX_TIMEOUT_DURATION;
+ 07F0 62D000            mov REG[0xd0],>_TIMEOUT
+ 07F3 550103            mov [_TIMEOUT+1],3
+ 07F6 550000            mov [_TIMEOUT],0
+ 07F9                   .dbline 431
+ 07F9           ;                                                                               }
+ 07F9           L138:
+ 07F9                   .dbline 432
+ 07F9           ;                                                                       }
+ 07F9           L135:
+ 07F9                   .dbline 433
+ 07F9           ;                                                               }
+ 07F9           L133:
+ 07F9                   .dbline 410
+ 07F9 62D000            mov REG[0xd0],>_TIMEOUT
+ 07FC 5101              mov A,[_TIMEOUT+1]
+ 07FE 1103              sub A,3
+ 0800 5100              mov A,[_TIMEOUT]
+ 0802 3180              xor A,-128
+ 0804 1980              sbb A,(0 ^ 0x80)
+ 0806 CF78              jc L132
+ 0808           X41:
+ 0808                   .dbline 434
+ 0808           ;                                                       }
+ 0808           L130:
+ 0808                   .dbline 435
+ 0808           ;                                               }
+ 0808           L128:
+ 0808                   .dbline 406
+ 0808 62D000            mov REG[0xd0],>_TIMEOUT
+ 080B 5101              mov A,[_TIMEOUT+1]
+ 080D 1103              sub A,3
+ 080F 5100              mov A,[_TIMEOUT]
+ 0811 3180              xor A,-128
+ 0813 1980              sbb A,(0 ^ 0x80)
+ 0815 CF5B              jc L127
+ 0817           X42:
+ 0817                   .dbline 436
+ 0817           ;                                       }
+ 0817 81D8              xjmp L124
+ 0819           L123:
+ 0819                   .dbline 437
+ 0819           ;                                       else if ((param[0] == 'p') || (param[0] == 'P'))
+ 0819 62D000            mov REG[0xd0],>__r0
+ 081C 5201              mov A,[X+1]
+ 081E 5300              mov [__r1],A
+ 0820 5200              mov A,[X+0]
+ 0822 60D4              mov REG[0xd4],A
+ 0824 3E00              mvi A,[__r1]
+ 0826 5300              mov [__r1],A
+ 0828 550000            mov [__r0],0
+ 082B 3C0000            cmp [__r0],0
+ 082E B005              jnz X43
+ 0830 3970              cmp A,112
+ 0832 A00E              jz L143
+ 0834           X43:
+ 0834 62D000            mov REG[0xd0],>__r0
+ 0837 3C0000            cmp [__r0],0
+ 083A B0EF              jnz L141
+ 083C 3C0050            cmp [__r1],80
+ 083F B0EA              jnz L141
+ 0841           X44:
+ 0841           L143:
+ 0841                   .dbline 438
+ 0841           ;                                       {
+ 0841                   .dbline 439
+ 0841           ;                                               servoInstruction(ID,4,READ_SERVO,24,1);
+ 0841 5001              mov A,1
+ 0843 08                push A
+ 0844 5018              mov A,24
+ 0846 08                push A
+ 0847 5002              mov A,2
+ 0849 08                push A
+ 084A 5004              mov A,4
+ 084C 08                push A
+ 084D 5204              mov A,[X+4]
+ 084F 08                push A
+ 0850 91C9              xcall _servoInstruction
+ 0852                   .dbline 440
+ 0852           ;                                               configToggle(RX_MODE);
+ 0852 5000              mov A,0
+ 0854 08                push A
+ 0855 5001              mov A,1
+ 0857 08                push A
+ 0858 9315              xcall _configToggle
+ 085A 38F9              add SP,-7
+ 085C 80BC              xjmp L145
+ 085E           L144:
+ 085E                   .dbline 444
+ 085E           ;                                               
+ 085E           ;                                               // Loop until we read a response or time out.
+ 085E           ;                                               while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 085E           ;                                               {
+ 085E                   .dbline 445
+ 085E           ;                                                       if(RECEIVE_cReadChar() == ID)
+ 085E 10                push X
+ 085F 7C0000            xcall _RECEIVE_cReadChar
+ 0862 62D000            mov REG[0xd0],>__r0
+ 0865 20                pop X
+ 0866 3B04              cmp A,[X+4]
+ 0868 B0B0              jnz L147
+ 086A                   .dbline 446
+ 086A           ;                                                       {
+ 086A                   .dbline 447
+ 086A           ;                                                               runningTotal = ID;
+ 086A 5204              mov A,[X+4]
+ 086C 5403              mov [X+3],A
+ 086E 560200            mov [X+2],0
+ 0871 8098              xjmp L150
+ 0873           L149:
+ 0873                   .dbline 450
+ 0873           ;                                                               // Loop until we read a response or time out.
+ 0873           ;                                                               while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 0873           ;                                                               {
+ 0873                   .dbline 452
+ 0873           ;                                                                       // Check the length of the packet.
+ 0873           ;                                                                       if(RECEIVE_cReadChar() == 3)
+ 0873 10                push X
+ 0874 7C0000            xcall _RECEIVE_cReadChar
+ 0877 62D000            mov REG[0xd0],>__r0
+ 087A 20                pop X
+ 087B 3903              cmp A,3
+ 087D B08C              jnz L152
+ 087F                   .dbline 453
+ 087F           ;                                                                       {
+ 087F                   .dbline 454
+ 087F           ;                                                                               runningTotal += 3;
+ 087F 070303            add [X+3],3
+ 0882 0F0200            adc [X+2],0
+ 0885 8075              xjmp L155
+ 0887           L154:
+ 0887                   .dbline 457
+ 0887           ;                                                                               // Loop until we read a response or time out.
+ 0887           ;                                                                               while(TIMEOUT < RX_TIMEOUT_DURATION)
+ 0887           ;                                                                               {
+ 0887                   .dbline 459
+ 0887           ;                                                                                       // Check for the checksum or 1.
+ 0887           ;                                                                                       if(tempByte = RECEIVE_cReadChar())
+ 0887 10                push X
+ 0888 7C0000            xcall _RECEIVE_cReadChar
+ 088B 62D000            mov REG[0xd0],>__r0
+ 088E 20                pop X
+ 088F 5407              mov [X+7],A
+ 0891 3900              cmp A,0
+ 0893 A067              jz L157
+ 0895                   .dbline 460
+ 0895           ;                                                                                       {
+ 0895                   .dbline 461
+ 0895           ;                                                                                               configToggle(PC_MODE);
+ 0895 5000              mov A,0
+ 0897 08                push A
+ 0898 5002              mov A,2
+ 089A 08                push A
+ 089B 92D2              xcall _configToggle
+ 089D 38FE              add SP,-2
+ 089F                   .dbline 463
+ 089F           ;                                                                                               
+ 089F           ;                                                                                               if((runningTotal%256) == (255-tempByte))
+ 089F 62D000            mov REG[0xd0],>__r0
+ 08A2 5207              mov A,[X+7]
+ 08A4 5300              mov [__r1],A
+ 08A6 550000            mov [__r0],0
+ 08A9 50FF              mov A,-1
+ 08AB 1200              sub A,[__r1]
+ 08AD 5300              mov [__r1],A
+ 08AF 5000              mov A,0
+ 08B1 1A00              sbb A,[__r0]
+ 08B3 5300              mov [__r0],A
+ 08B5 5001              mov A,1
+ 08B7 08                push A
+ 08B8 5000              mov A,0
+ 08BA 08                push A
+ 08BB 5202              mov A,[X+2]
+ 08BD 08                push A
+ 08BE 5203              mov A,[X+3]
+ 08C0 08                push A
+ 08C1 7C0000            xcall __divmod_16X16_16
+ 08C4 38FE              add SP,-2
+ 08C6 18                pop A
+ 08C7 5300              mov [__r3],A
+ 08C9 18                pop A
+ 08CA 3A00              cmp A,[__r0]
+ 08CC B017              jnz L159
+ 08CE 5100              mov A,[__r3]
+ 08D0 3A00              cmp A,[__r1]
+ 08D2 B011              jnz L159
+ 08D4           X45:
+ 08D4                   .dbline 464
+ 08D4           ;                                                                                               {
+ 08D4                   .dbline 466
+ 08D4           ;                                                                                                       // Send a 0 if we hit the checksum.
+ 08D4           ;                                                                                                       COMP_SERIAL_PutChar('0');
+ 08D4 10                push X
+ 08D5 5030              mov A,48
+ 08D7 7C0000            xcall _COMP_SERIAL_PutChar
+ 08DA 20                pop X
+ 08DB                   .dbline 467
+ 08DB           ;                                                                                                       COMP_SERIAL_PutChar('\n');
+ 08DB 10                push X
+ 08DC 500A              mov A,10
+ 08DE 7C0000            xcall _COMP_SERIAL_PutChar
+ 08E1 20                pop X
+ 08E2                   .dbline 468
+ 08E2           ;                                                                                               }
+ 08E2 800F              xjmp L160
+ 08E4           L159:
+ 08E4                   .dbline 470
+ 08E4           ;                                                                                               else
+ 08E4           ;                                                                                               {
+ 08E4                   .dbline 472
+ 08E4           ;                                                                                                       // Send a 1.
+ 08E4           ;                                                                                                       COMP_SERIAL_PutChar('1');
+ 08E4 10                push X
+ 08E5 5031              mov A,49
+ 08E7 7C0000            xcall _COMP_SERIAL_PutChar
+ 08EA 20                pop X
+ 08EB                   .dbline 473
+ 08EB           ;                                                                                                       COMP_SERIAL_PutChar('\n');
+ 08EB 10                push X
+ 08EC 500A              mov A,10
+ 08EE 7C0000            xcall _COMP_SERIAL_PutChar
+ 08F1 20                pop X
+ 08F2                   .dbline 474
+ 08F2           ;                                                                                               }
+ 08F2           L160:
+ 08F2                   .dbline 476
+ 08F2           ;               
+ 08F2           ;                                                                                               TIMEOUT = RX_TIMEOUT_DURATION;
+ 08F2 62D000            mov REG[0xd0],>_TIMEOUT
+ 08F5 550103            mov [_TIMEOUT+1],3
+ 08F8 550000            mov [_TIMEOUT],0
+ 08FB                   .dbline 477
+ 08FB           ;                                                                                       }
+ 08FB           L157:
+ 08FB                   .dbline 478
+ 08FB           ;                                                                               }
+ 08FB           L155:
+ 08FB                   .dbline 456
+ 08FB 62D000            mov REG[0xd0],>_TIMEOUT
+ 08FE 5101              mov A,[_TIMEOUT+1]
+ 0900 1103              sub A,3
+ 0902 5100              mov A,[_TIMEOUT]
+ 0904 3180              xor A,-128
+ 0906 1980              sbb A,(0 ^ 0x80)
+ 0908 CF7E              jc L154
+ 090A           X46:
+ 090A                   .dbline 479
+ 090A           ;                                                                       }
+ 090A           L152:
+ 090A                   .dbline 480
+ 090A           ;                                                               }
+ 090A           L150:
+ 090A                   .dbline 449
+ 090A 62D000            mov REG[0xd0],>_TIMEOUT
+ 090D 5101              mov A,[_TIMEOUT+1]
+ 090F 1103              sub A,3
+ 0911 5100              mov A,[_TIMEOUT]
+ 0913 3180              xor A,-128
+ 0915 1980              sbb A,(0 ^ 0x80)
+ 0917 CF5B              jc L149
+ 0919           X47:
+ 0919                   .dbline 481
+ 0919           ;                                                       }
+ 0919           L147:
+ 0919                   .dbline 482
+ 0919           ;                                               }
+ 0919           L145:
+ 0919                   .dbline 443
+ 0919 62D000            mov REG[0xd0],>_TIMEOUT
+ 091C 5101              mov A,[_TIMEOUT+1]
+ 091E 1103              sub A,3
+ 0920 5100              mov A,[_TIMEOUT]
+ 0922 3180              xor A,-128
+ 0924 1980              sbb A,(0 ^ 0x80)
+ 0926 CF37              jc L144
+ 0928           X48:
+ 0928                   .dbline 483
+ 0928           ;                                       }
+ 0928 80C7              xjmp L142
+ 092A           L141:
+ 092A                   .dbline 484
+ 092A           ;                                       else if ((param[0] == 't') || (param[0] == 'T'))
+ 092A 62D000            mov REG[0xd0],>__r0
+ 092D 5201              mov A,[X+1]
+ 092F 5300              mov [__r1],A
+ 0931 5200              mov A,[X+0]
+ 0933 60D4              mov REG[0xd4],A
+ 0935 3E00              mvi A,[__r1]
+ 0937 5300              mov [__r1],A
+ 0939 550000            mov [__r0],0
+ 093C 3C0000            cmp [__r0],0
+ 093F B005              jnz X49
+ 0941 3974              cmp A,116
+ 0943 A00E              jz L163
+ 0945           X49:
+ 0945 62D000            mov REG[0xd0],>__r0
+ 0948 3C0000            cmp [__r0],0
+ 094B B042              jnz L161
+ 094D 3C0054            cmp [__r1],84
+ 0950 B03D              jnz L161
+ 0952           X50:
+ 0952           L163:
+ 0952                   .dbline 485
+ 0952           ;                                       {
+ 0952                   .dbline 486
+ 0952           ;                                               if(pingModule(ID))
+ 0952 62D000            mov REG[0xd0],>__r0
+ 0955 5204              mov A,[X+4]
+ 0957 5300              mov [__r1],A
+ 0959 5000              mov A,0
+ 095B 08                push A
+ 095C 5100              mov A,[__r1]
+ 095E 08                push A
+ 095F 7C0034            xcall _pingModule
+ 0962 38FE              add SP,-2
+ 0964 62D000            mov REG[0xd0],>__r0
+ 0967 3C0000            cmp [__r0],0
+ 096A B006              jnz X51
+ 096C 3C0000            cmp [__r1],0
+ 096F A080              jz L162
+ 0971           X51:
+ 0971                   .dbline 487
+ 0971           ;                                               {
+ 0971                   .dbline 488
+ 0971           ;                                                       configToggle(PC_MODE);
+ 0971 5000              mov A,0
+ 0973 08                push A
+ 0974 5002              mov A,2
+ 0976 08                push A
+ 0977 91F6              xcall _configToggle
+ 0979 38FE              add SP,-2
+ 097B                   .dbline 490
+ 097B           ;                                                                                               
+ 097B           ;                                                       COMP_SERIAL_PutChar(PARAM[0]);
+ 097B 10                push X
+ 097C 62D000            mov REG[0xd0],>_PARAM
+ 097F 5100              mov A,[_PARAM]
+ 0981 7C0000            xcall _COMP_SERIAL_PutChar
+ 0984 20                pop X
+ 0985                   .dbline 491
+ 0985           ;                                                       COMP_SERIAL_PutChar('\n');
+ 0985 10                push X
+ 0986 500A              mov A,10
+ 0988 7C0000            xcall _COMP_SERIAL_PutChar
+ 098B 20                pop X
+ 098C                   .dbline 492
+ 098C           ;                                               }
+ 098C                   .dbline 493
+ 098C           ;                                       }
+ 098C 8063              xjmp L162
+ 098E           L161:
+ 098E                   .dbline 494
+ 098E           ;                                       else if ((param[0] == 'c') || (param[0] == 'C'))
+ 098E 62D000            mov REG[0xd0],>__r0
+ 0991 5201              mov A,[X+1]
+ 0993 5300              mov [__r1],A
+ 0995 5200              mov A,[X+0]
+ 0997 60D4              mov REG[0xd4],A
+ 0999 3E00              mvi A,[__r1]
+ 099B 5300              mov [__r1],A
+ 099D 550000            mov [__r0],0
+ 09A0 3C0000            cmp [__r0],0
+ 09A3 B005              jnz X52
+ 09A5 3963              cmp A,99
+ 09A7 A00E              jz L168
+ 09A9           X52:
+ 09A9 62D000            mov REG[0xd0],>__r0
+ 09AC 3C0000            cmp [__r0],0
+ 09AF B040              jnz L166
+ 09B1 3C0043            cmp [__r1],67
+ 09B4 B03B              jnz L166
+ 09B6           X53:
+ 09B6           L168:
+ 09B6                   .dbline 495
+ 09B6           ;                                       {
+ 09B6                   .dbline 496
+ 09B6           ;                                               if(pingModule(ID))
+ 09B6 62D000            mov REG[0xd0],>__r0
+ 09B9 5204              mov A,[X+4]
+ 09BB 5300              mov [__r1],A
+ 09BD 5000              mov A,0
+ 09BF 08                push A
+ 09C0 5100              mov A,[__r1]
+ 09C2 08                push A
+ 09C3 7C0034            xcall _pingModule
+ 09C6 38FE              add SP,-2
+ 09C8 62D000            mov REG[0xd0],>__r0
+ 09CB 3C0000            cmp [__r0],0
+ 09CE B006              jnz X54
+ 09D0 3C0000            cmp [__r1],0
+ 09D3 A01C              jz L169
+ 09D5           X54:
+ 09D5                   .dbline 497
+ 09D5           ;                                               {       
+ 09D5                   .dbline 498
+ 09D5           ;                                                       configToggle(PC_MODE);
+ 09D5 5000              mov A,0
+ 09D7 08                push A
+ 09D8 5002              mov A,2
+ 09DA 08                push A
+ 09DB 9192              xcall _configToggle
+ 09DD 38FE              add SP,-2
+ 09DF                   .dbline 500
+ 09DF           ;                                                       
+ 09DF           ;                                                       COMP_SERIAL_PutChar(PARAM[1]);
+ 09DF 10                push X
+ 09E0 62D000            mov REG[0xd0],>_PARAM
+ 09E3 5101              mov A,[_PARAM+1]
+ 09E5 7C0000            xcall _COMP_SERIAL_PutChar
+ 09E8 20                pop X
+ 09E9                   .dbline 501
+ 09E9           ;                                                       COMP_SERIAL_PutChar('\n');
+ 09E9 10                push X
+ 09EA 500A              mov A,10
+ 09EC 7C0000            xcall _COMP_SERIAL_PutChar
+ 09EF 20                pop X
+ 09F0                   .dbline 502
+ 09F0           ;                                               }
+ 09F0           L169:
+ 09F0                   .dbline 503
+ 09F0           ;                                       }
+ 09F0           L166:
+ 09F0           L162:
+ 09F0           L142:
+ 09F0           L124:
+ 09F0                   .dbline 504
+ 09F0           ;                               }
+ 09F0           L121:
+ 09F0                   .dbline 505
+ 09F0           ;                       }
+ 09F0           L119:
+ 09F0                   .dbline 506
+ 09F0           ;               }
+ 09F0           L116:
+ 09F0           L89:
+ 09F0           L86:
+ 09F0           L83:
+ 09F0                   .dbline 507
+ 09F0           ;       }
+ 09F0           L80:
+ 09F0                   .dbline 509
+ 09F0           ;       
+ 09F0           ;       if(STATE != PC_MODE)
+ 09F0 62D000            mov REG[0xd0],>_STATE
+ 09F3 3C0000            cmp [_STATE],0
+ 09F6 B006              jnz X55
+ 09F8 3C0102            cmp [_STATE+1],2
+ 09FB A00D              jz L172
+ 09FD           X55:
+ 09FD                   .dbline 510
+ 09FD           ;       {
+ 09FD                   .dbline 511
+ 09FD           ;               configToggle(PC_MODE);
+ 09FD 5000              mov A,0
+ 09FF 08                push A
+ 0A00 5002              mov A,2
+ 0A02 08                push A
+ 0A03 916A              xcall _configToggle
+ 0A05 38FE              add SP,-2
+ 0A07                   .dbline 512
+ 0A07           ;       }
+ 0A07 800F              xjmp L173
+ 0A09           L172:
+ 0A09                   .dbline 514
+ 0A09           ;       else
+ 0A09           ;       {
+ 0A09                   .dbline 515
+ 0A09           ;               TIMEOUT = 0;
+ 0A09 62D000            mov REG[0xd0],>_TIMEOUT
+ 0A0C 550100            mov [_TIMEOUT+1],0
+ 0A0F 550000            mov [_TIMEOUT],0
+ 0A12                   .dbline 516
+ 0A12           ;               COMP_SERIAL_CmdReset();
+ 0A12 10                push X
+ 0A13 7C0000            xcall _COMP_SERIAL_CmdReset
+ 0A16 20                pop X
+ 0A17                   .dbline 517
+ 0A17           ;       }
+ 0A17           L173:
+ 0A17                   .dbline -2
+ 0A17           L79:
+ 0A17 38F4              add SP,-12
+ 0A19 20                pop X
+ 0A1A                   .dbline 0 ; func end
+ 0A1A 7F                ret
+ 0A1B                   .dbsym l speed 10 A[2:2]c
+ 0A1B                   .dbsym l angle 8 A[2:2]c
+ 0A1B                   .dbsym l tempByte 7 c
+ 0A1B                   .dbsym l total 5 I
+ 0A1B                   .dbsym l ID 4 c
+ 0A1B                   .dbsym l runningTotal 2 I
+ 0A1B                   .dbsym l param 0 pc
+ 0A1B                   .dbend
+ 0A1B                   .dbfunc e servoInstruction _servoInstruction fV
+ 0A1B           ;          total -> X+1
+ 0A1B           ;       checksum -> X+0
+ 0A1B           ;          value -> X-8
+ 0A1B           ;        address -> X-7
+ 0A1B           ;    instruction -> X-6
+ 0A1B           ;         length -> X-5
+ 0A1B           ;             id -> X-4
+ 0A1B           _servoInstruction::
+ 0A1B                   .dbline -1
+ 0A1B 10                push X
+ 0A1C 4F                mov X,SP
+ 0A1D 3803              add SP,3
+ 0A1F                   .dbline 523
+ 0A1F           ; }
+ 0A1F           ; 
+ 0A1F           ; // This function receives a destination, command length, instruction type, address, and value.
+ 0A1F           ; // With these parameters, the function sends a packet to the communication bus.
+ 0A1F           ; void servoInstruction(char id, char length, char instruction, char address, char value)
+ 0A1F           ; {
+ 0A1F                   .dbline 527
+ 0A1F           ;       char checksum;
+ 0A1F           ;       int total;
+ 0A1F           ;       
+ 0A1F           ;       total = id + length + instruction + address + value;
+ 0A1F 62D000            mov REG[0xd0],>__r0
+ 0A22 52FB              mov A,[X-5]
+ 0A24 5300              mov [__r1],A
+ 0A26 550000            mov [__r0],0
+ 0A29 52FC              mov A,[X-4]
+ 0A2B 0200              add A,[__r1]
+ 0A2D 5300              mov [__r1],A
+ 0A2F 5000              mov A,0
+ 0A31 0A00              adc A,[__r0]
+ 0A33 5300              mov [__r0],A
+ 0A35 52FA              mov A,[X-6]
+ 0A37 0400              add [__r1],A
+ 0A39 0E0000            adc [__r0],0
+ 0A3C 52F9              mov A,[X-7]
+ 0A3E 0400              add [__r1],A
+ 0A40 0E0000            adc [__r0],0
+ 0A43 52F8              mov A,[X-8]
+ 0A45 5300              mov [__r3],A
+ 0A47 550000            mov [__r2],0
+ 0A4A 5100              mov A,[__r1]
+ 0A4C 0200              add A,[__r3]
+ 0A4E 5402              mov [X+2],A
+ 0A50 5100              mov A,[__r0]
+ 0A52 0A00              adc A,[__r2]
+ 0A54 5401              mov [X+1],A
+ 0A56                   .dbline 530
+ 0A56           ;       
+ 0A56           ;       // Calculate the checksum value for our servo communication.
+ 0A56           ;       checksum = 255-(total%256);
+ 0A56 5001              mov A,1
+ 0A58 08                push A
+ 0A59 5000              mov A,0
+ 0A5B 08                push A
+ 0A5C 5201              mov A,[X+1]
+ 0A5E 08                push A
+ 0A5F 5202              mov A,[X+2]
+ 0A61 08                push A
+ 0A62 7C0000            xcall __divmod_16X16_16
+ 0A65 38FE              add SP,-2
+ 0A67 18                pop A
+ 0A68 5300              mov [__r1],A
+ 0A6A 18                pop A
+ 0A6B 50FF              mov A,-1
+ 0A6D 1200              sub A,[__r1]
+ 0A6F 5400              mov [X+0],A
+ 0A71                   .dbline 533
+ 0A71           ;       
+ 0A71           ;       // Talk to the servo.
+ 0A71           ;       TX_REPEATER_PutChar(SERVO_START);       // Start byte one
+ 0A71 10                push X
+ 0A72 50FF              mov A,-1
+ 0A74 7C0000            xcall _TX_REPEATER_PutChar
+ 0A77 20                pop X
+ 0A78                   .dbline 534
+ 0A78           ;       TX_REPEATER_PutChar(SERVO_START);       // Start byte two
+ 0A78 10                push X
+ 0A79 50FF              mov A,-1
+ 0A7B 7C0000            xcall _TX_REPEATER_PutChar
+ 0A7E 20                pop X
+ 0A7F                   .dbline 535
+ 0A7F           ;       TX_REPEATER_PutChar(id);                        // Servo ID
+ 0A7F 10                push X
+ 0A80 52FC              mov A,[X-4]
+ 0A82 7C0000            xcall _TX_REPEATER_PutChar
+ 0A85 20                pop X
+ 0A86                   .dbline 536
+ 0A86           ;       TX_REPEATER_PutChar(length);            // The instruction length.
+ 0A86 10                push X
+ 0A87 52FB              mov A,[X-5]
+ 0A89 7C0000            xcall _TX_REPEATER_PutChar
+ 0A8C 20                pop X
+ 0A8D                   .dbline 537
+ 0A8D           ;       TX_REPEATER_PutChar(instruction);       // The instruction to carry out.
+ 0A8D 10                push X
+ 0A8E 52FA              mov A,[X-6]
+ 0A90 7C0000            xcall _TX_REPEATER_PutChar
+ 0A93 20                pop X
+ 0A94                   .dbline 538
+ 0A94           ;       TX_REPEATER_PutChar(address);           // The address to read/write from/to.
+ 0A94 10                push X
+ 0A95 52F9              mov A,[X-7]
+ 0A97 7C0000            xcall _TX_REPEATER_PutChar
+ 0A9A 20                pop X
+ 0A9B                   .dbline 539
+ 0A9B           ;       TX_REPEATER_PutChar(value);                     // The value to write or number of bytes to read.
+ 0A9B 10                push X
+ 0A9C 52F8              mov A,[X-8]
+ 0A9E 7C0000            xcall _TX_REPEATER_PutChar
+ 0AA1 20                pop X
+ 0AA2                   .dbline 540
+ 0AA2           ;       TX_REPEATER_PutChar(checksum);          // This is the checksum.
+ 0AA2 10                push X
+ 0AA3 5200              mov A,[X+0]
+ 0AA5 7C0000            xcall _TX_REPEATER_PutChar
+ 0AA8 20                pop X
+ 0AA9           L175:
+ 0AA9                   .dbline 543
+ 0AA9           ;       
+ 0AA9           ;       // Wait for the transmission to finish.
+ 0AA9           ;       while(!(TX_REPEATER_bReadTxStatus() & TX_REPEATER_TX_COMPLETE));
+ 0AA9           L176:
+ 0AA9                   .dbline 543
+ 0AA9 10                push X
+ 0AAA 7C0000            xcall _TX_REPEATER_bReadTxStatus
+ 0AAD 62D000            mov REG[0xd0],>__r0
+ 0AB0 20                pop X
+ 0AB1 5300              mov [__r0],A
+ 0AB3 470020            tst [__r0],32
+ 0AB6 AFF2              jz L175
+ 0AB8                   .dbline 546
+ 0AB8           ;       
+ 0AB8           ;       // Make completely sure we're done.
+ 0AB8           ;       xmitWait();
+ 0AB8 93B8              xcall _xmitWait
+ 0ABA                   .dbline -2
+ 0ABA           L174:
+ 0ABA 38FD              add SP,-3
+ 0ABC 20                pop X
+ 0ABD                   .dbline 0 ; func end
+ 0ABD 7F                ret
+ 0ABE                   .dbsym l total 1 I
+ 0ABE                   .dbsym l checksum 0 c
+ 0ABE                   .dbsym l value -8 c
+ 0ABE                   .dbsym l address -7 c
+ 0ABE                   .dbsym l instruction -6 c
+ 0ABE                   .dbsym l length -5 c
+ 0ABE                   .dbsym l id -4 c
+ 0ABE                   .dbend
+ 0ABE                   .dbfunc e longServoInstruction _longServoInstruction fV
+ 0ABE           ;          total -> X+1
+ 0ABE           ;       checksum -> X+0
+ 0ABE           ;         value2 -> X-9
+ 0ABE           ;         value1 -> X-8
+ 0ABE           ;        address -> X-7
+ 0ABE           ;    instruction -> X-6
+ 0ABE           ;         length -> X-5
+ 0ABE           ;             id -> X-4
+ 0ABE           _longServoInstruction::
+ 0ABE                   .dbline -1
+ 0ABE 10                push X
+ 0ABF 4F                mov X,SP
+ 0AC0 3803              add SP,3
+ 0AC2                   .dbline 551
+ 0AC2           ; }
+ 0AC2           ; 
+ 0AC2           ; // This function receives a destination, command length, instruction type, address, and two values.
+ 0AC2           ; void longServoInstruction(char id, char length, char instruction, char address, char value1, char value2)
+ 0AC2           ; {
+ 0AC2                   .dbline 555
+ 0AC2           ;       char checksum;
+ 0AC2           ;       int total;
+ 0AC2           ;       
+ 0AC2           ;       total = id + length + instruction + address + value1 + value2;
+ 0AC2 62D000            mov REG[0xd0],>__r0
+ 0AC5 52FB              mov A,[X-5]
+ 0AC7 5300              mov [__r1],A
+ 0AC9 550000            mov [__r0],0
+ 0ACC 52FC              mov A,[X-4]
+ 0ACE 0200              add A,[__r1]
+ 0AD0 5300              mov [__r1],A
+ 0AD2 5000              mov A,0
+ 0AD4 0A00              adc A,[__r0]
+ 0AD6 5300              mov [__r0],A
+ 0AD8 52FA              mov A,[X-6]
+ 0ADA 0400              add [__r1],A
+ 0ADC 0E0000            adc [__r0],0
+ 0ADF 52F9              mov A,[X-7]
+ 0AE1 0400              add [__r1],A
+ 0AE3 0E0000            adc [__r0],0
+ 0AE6 52F8              mov A,[X-8]
+ 0AE8 0400              add [__r1],A
+ 0AEA 0E0000            adc [__r0],0
+ 0AED 52F7              mov A,[X-9]
+ 0AEF 5300              mov [__r3],A
+ 0AF1 550000            mov [__r2],0
+ 0AF4 5100              mov A,[__r1]
+ 0AF6 0200              add A,[__r3]
+ 0AF8 5402              mov [X+2],A
+ 0AFA 5100              mov A,[__r0]
+ 0AFC 0A00              adc A,[__r2]
+ 0AFE 5401              mov [X+1],A
+ 0B00                   .dbline 558
+ 0B00           ;       
+ 0B00           ;       // Calculate the checksum value for our servo communication.
+ 0B00           ;       checksum = 255-(total%256);
+ 0B00 5001              mov A,1
+ 0B02 08                push A
+ 0B03 5000              mov A,0
+ 0B05 08                push A
+ 0B06 5201              mov A,[X+1]
+ 0B08 08                push A
+ 0B09 5202              mov A,[X+2]
+ 0B0B 08                push A
+ 0B0C 7C0000            xcall __divmod_16X16_16
+ 0B0F 38FE              add SP,-2
+ 0B11 18                pop A
+ 0B12 5300              mov [__r1],A
+ 0B14 18                pop A
+ 0B15 50FF              mov A,-1
+ 0B17 1200              sub A,[__r1]
+ 0B19 5400              mov [X+0],A
+ 0B1B                   .dbline 561
+ 0B1B           ;       
+ 0B1B           ;       // Talk to the servo.
+ 0B1B           ;       TX_REPEATER_PutChar(SERVO_START);       // Start byte one
+ 0B1B 10                push X
+ 0B1C 50FF              mov A,-1
+ 0B1E 7C0000            xcall _TX_REPEATER_PutChar
+ 0B21 20                pop X
+ 0B22                   .dbline 562
+ 0B22           ;       TX_REPEATER_PutChar(SERVO_START);       // Start byte two
+ 0B22 10                push X
+ 0B23 50FF              mov A,-1
+ 0B25 7C0000            xcall _TX_REPEATER_PutChar
+ 0B28 20                pop X
+ 0B29                   .dbline 563
+ 0B29           ;       TX_REPEATER_PutChar(id);                        // Servo ID
+ 0B29 10                push X
+ 0B2A 52FC              mov A,[X-4]
+ 0B2C 7C0000            xcall _TX_REPEATER_PutChar
+ 0B2F 20                pop X
+ 0B30                   .dbline 564
+ 0B30           ;       TX_REPEATER_PutChar(length);            // The instruction length.
+ 0B30 10                push X
+ 0B31 52FB              mov A,[X-5]
+ 0B33 7C0000            xcall _TX_REPEATER_PutChar
+ 0B36 20                pop X
+ 0B37                   .dbline 565
+ 0B37           ;       TX_REPEATER_PutChar(instruction);       // The instruction to carry out.
+ 0B37 10                push X
+ 0B38 52FA              mov A,[X-6]
+ 0B3A 7C0000            xcall _TX_REPEATER_PutChar
+ 0B3D 20                pop X
+ 0B3E                   .dbline 566
+ 0B3E           ;       TX_REPEATER_PutChar(address);           // The address to read/write from/to.
+ 0B3E 10                push X
+ 0B3F 52F9              mov A,[X-7]
+ 0B41 7C0000            xcall _TX_REPEATER_PutChar
+ 0B44 20                pop X
+ 0B45                   .dbline 567
+ 0B45           ;       TX_REPEATER_PutChar(value1);            // The first value to write.
+ 0B45 10                push X
+ 0B46 52F8              mov A,[X-8]
+ 0B48 7C0000            xcall _TX_REPEATER_PutChar
+ 0B4B 20                pop X
+ 0B4C                   .dbline 568
+ 0B4C           ;       TX_REPEATER_PutChar(value2);            // The first value to write.
+ 0B4C 10                push X
+ 0B4D 52F7              mov A,[X-9]
+ 0B4F 7C0000            xcall _TX_REPEATER_PutChar
+ 0B52 20                pop X
+ 0B53                   .dbline 569
+ 0B53           ;       TX_REPEATER_PutChar(checksum);          // This is the checksum.
+ 0B53 10                push X
+ 0B54 5200              mov A,[X+0]
+ 0B56 7C0000            xcall _TX_REPEATER_PutChar
+ 0B59 20                pop X
+ 0B5A           L179:
+ 0B5A                   .dbline 572
+ 0B5A           ;       
+ 0B5A           ;       // Wait for the transmission to finish.
+ 0B5A           ;       while(!(TX_REPEATER_bReadTxStatus() & TX_REPEATER_TX_COMPLETE));
+ 0B5A           L180:
+ 0B5A                   .dbline 572
+ 0B5A 10                push X
+ 0B5B 7C0000            xcall _TX_REPEATER_bReadTxStatus
+ 0B5E 62D000            mov REG[0xd0],>__r0
+ 0B61 20                pop X
+ 0B62 5300              mov [__r0],A
+ 0B64 470020            tst [__r0],32
+ 0B67 AFF2              jz L179
+ 0B69                   .dbline 575
+ 0B69           ;       
+ 0B69           ;       // Make completely sure we're done.
+ 0B69           ;       xmitWait();
+ 0B69 9307              xcall _xmitWait
+ 0B6B                   .dbline -2
+ 0B6B           L178:
+ 0B6B 38FD              add SP,-3
+ 0B6D 20                pop X
+ 0B6E                   .dbline 0 ; func end
+ 0B6E 7F                ret
+ 0B6F                   .dbsym l total 1 I
+ 0B6F                   .dbsym l checksum 0 c
+ 0B6F                   .dbsym l value2 -9 c
+ 0B6F                   .dbsym l value1 -8 c
+ 0B6F                   .dbsym l address -7 c
+ 0B6F                   .dbsym l instruction -6 c
+ 0B6F                   .dbsym l length -5 c
+ 0B6F                   .dbsym l id -4 c
+ 0B6F                   .dbend
+ 0B6F                   .dbfunc e configToggle _configToggle fV
+ 0B6F           ;           mode -> X-5
+ 0B6F           _configToggle::
+ 0B6F                   .dbline -1
+ 0B6F 10                push X
+ 0B70 4F                mov X,SP
+ 0B71                   .dbline 581
+ 0B71           ; }
+ 0B71           ; 
+ 0B71           ; // This function allows the program to pass an RX or TX mode flag for switching between modes on the
+ 0B71           ; // half duplex UART serial communication line.
+ 0B71           ; void configToggle(int mode)
+ 0B71           ; {
+ 0B71                   .dbline 583
+ 0B71           ;       // Disconnect from the global bus and leave the pin high.
+ 0B71           ;       PRT0DR |= 0b11111111;
+ 0B71 4300FF            or REG[0],-1
+ 0B74                   .dbline 584
+ 0B74           ;       PRT0GS &= 0b01000000;
+ 0B74 410240            and REG[0x2],64
+ 0B77                   .dbline 588
+ 0B77           ; 
+ 0B77           ;       // Unload the configuration of the current state.
+ 0B77           ;       // If there is no state, blindly wipe all configurations.
+ 0B77           ;       if(STATE)
+ 0B77 62D000            mov REG[0xd0],>_STATE
+ 0B7A 3C0000            cmp [_STATE],0
+ 0B7D B006              jnz X56
+ 0B7F 3C0100            cmp [_STATE+1],0
+ 0B82 A010              jz L183
+ 0B84           X56:
+ 0B84                   .dbline 589
+ 0B84           ;       {
+ 0B84                   .dbline 590
+ 0B84           ;               unloadConfig(STATE);
+ 0B84 62D000            mov REG[0xd0],>_STATE
+ 0B87 5100              mov A,[_STATE]
+ 0B89 08                push A
+ 0B8A 5101              mov A,[_STATE+1]
+ 0B8C 08                push A
+ 0B8D 90C9              xcall _unloadConfig
+ 0B8F 38FE              add SP,-2
+ 0B91                   .dbline 591
+ 0B91           ;       }
+ 0B91 8003              xjmp L184
+ 0B93           L183:
+ 0B93                   .dbline 593
+ 0B93           ;       else
+ 0B93           ;       {
+ 0B93                   .dbline 594
+ 0B93           ;               unloadAllConfigs();
+ 0B93 90B9              xcall _unloadAllConfigs
+ 0B95                   .dbline 595
+ 0B95           ;       }
+ 0B95           L184:
+ 0B95                   .dbline 597
+ 0B95           ;       
+ 0B95           ;       if(mode == PC_MODE)
+ 0B95 3DFB00            cmp [X-5],0
+ 0B98 B037              jnz L185
+ 0B9A 3DFC02            cmp [X-4],2
+ 0B9D B032              jnz L185
+ 0B9F           X57:
+ 0B9F                   .dbline 598
+ 0B9F           ;       {
+ 0B9F                   .dbline 599
+ 0B9F           ;               LoadConfig_pc_listener();
+ 0B9F 7C0000            xcall _LoadConfig_pc_listener
+ 0BA2                   .dbline 601
+ 0BA2           ; 
+ 0BA2           ;               COMP_SERIAL_CmdReset();                                                 // Initialize the buffer.
+ 0BA2 10                push X
+ 0BA3 7C0000            xcall _COMP_SERIAL_CmdReset
+ 0BA6 20                pop X
+ 0BA7                   .dbline 602
+ 0BA7           ;               COMP_SERIAL_IntCntl(COMP_SERIAL_ENABLE_RX_INT); // Enable RX interrupts  
+ 0BA7 10                push X
+ 0BA8 5001              mov A,1
+ 0BAA 7C0000            xcall _COMP_SERIAL_IntCntl
+ 0BAD 20                pop X
+ 0BAE                   .dbline 603
+ 0BAE           ;               COMP_SERIAL_Start(UART_PARITY_NONE);                    // Starts the UART.
+ 0BAE 10                push X
+ 0BAF 5000              mov A,0
+ 0BB1 7C0000            xcall _COMP_SERIAL_Start
+ 0BB4 20                pop X
+ 0BB5                   .dbline 605
+ 0BB5           ;               
+ 0BB5           ;               TX_REPEATER_Start(TX_REPEATER_PARITY_NONE);             // Start the TX repeater.
+ 0BB5 10                push X
+ 0BB6 5000              mov A,0
+ 0BB8 7C0000            xcall _TX_REPEATER_Start
+ 0BBB 20                pop X
+ 0BBC                   .dbline 607
+ 0BBC           ;               
+ 0BBC           ;               TIMEOUT = 0;
+ 0BBC 62D000            mov REG[0xd0],>_TIMEOUT
+ 0BBF 550100            mov [_TIMEOUT+1],0
+ 0BC2 550000            mov [_TIMEOUT],0
+ 0BC5                   .dbline 608
+ 0BC5           ;               STATE = PC_MODE;
+ 0BC5 62D000            mov REG[0xd0],>_STATE
+ 0BC8 550102            mov [_STATE+1],2
+ 0BCB 550000            mov [_STATE],0
+ 0BCE                   .dbline 609
+ 0BCE           ;       }
+ 0BCE 807A              xjmp L186
+ 0BD0           L185:
+ 0BD0                   .dbline 610
+ 0BD0           ;       else if(mode == RX_MODE)
+ 0BD0 3DFB00            cmp [X-5],0
+ 0BD3 B02C              jnz L187
+ 0BD5 3DFC01            cmp [X-4],1
+ 0BD8 B027              jnz L187
+ 0BDA           X58:
+ 0BDA                   .dbline 611
+ 0BDA           ;       {
+ 0BDA                   .dbline 612
+ 0BDA           ;               LoadConfig_receiver_config();
+ 0BDA 7C0000            xcall _LoadConfig_receiver_config
+ 0BDD                   .dbline 615
+ 0BDD           ;               
+ 0BDD           ;               // Start the receiver.
+ 0BDD           ;               RECEIVE_Start(RECEIVE_PARITY_NONE);
+ 0BDD 10                push X
+ 0BDE 5000              mov A,0
+ 0BE0 7C0000            xcall _RECEIVE_Start
+ 0BE3 20                pop X
+ 0BE4                   .dbline 618
+ 0BE4           ;               
+ 0BE4           ;               // Start response timeout timer and enable its interrupt routine.
+ 0BE4           ;               TIMEOUT = 0;
+ 0BE4 62D000            mov REG[0xd0],>_TIMEOUT
+ 0BE7 550100            mov [_TIMEOUT+1],0
+ 0BEA 550000            mov [_TIMEOUT],0
+ 0BED                   .dbline 619
+ 0BED           ;               RX_TIMEOUT_EnableInt();
+ 0BED 10                push X
+ 0BEE 7C0000            xcall _RX_TIMEOUT_EnableInt
+ 0BF1                   .dbline 620
+ 0BF1           ;               RX_TIMEOUT_Start();
+ 0BF1 7C0000            xcall _RX_TIMEOUT_Start
+ 0BF4 20                pop X
+ 0BF5                   .dbline 622
+ 0BF5           ;               
+ 0BF5           ;               STATE = RX_MODE;
+ 0BF5 62D000            mov REG[0xd0],>_STATE
+ 0BF8 550101            mov [_STATE+1],1
+ 0BFB 550000            mov [_STATE],0
+ 0BFE                   .dbline 623
+ 0BFE           ;       }
+ 0BFE 804A              xjmp L188
+ 0C00           L187:
+ 0C00                   .dbline 624
+ 0C00           ;       else if(mode == TX_MODE)
+ 0C00 3DFB00            cmp [X-5],0
+ 0C03 B045              jnz L189
+ 0C05 3DFC00            cmp [X-4],0
+ 0C08 B040              jnz L189
+ 0C0A           X59:
+ 0C0A                   .dbline 625
+ 0C0A           ;       {
+ 0C0A                   .dbline 626
+ 0C0A           ;               LoadConfig_transmitter_config();
+ 0C0A 7C0000            xcall _LoadConfig_transmitter_config
+ 0C0D                   .dbline 628
+ 0C0D           ;               // Start the transmitter.
+ 0C0D           ;               TRANSMIT_Start(TRANSMIT_PARITY_NONE);
+ 0C0D 10                push X
+ 0C0E 5000              mov A,0
+ 0C10 7C0000            xcall _TRANSMIT_Start
+ 0C13 20                pop X
+ 0C14                   .dbline 630
+ 0C14           ;               
+ 0C14           ;               TIMEOUT = 0;
+ 0C14 62D000            mov REG[0xd0],>_TIMEOUT
+ 0C17 550100            mov [_TIMEOUT+1],0
+ 0C1A 550000            mov [_TIMEOUT],0
+ 0C1D                   .dbline 631
+ 0C1D           ;               TX_TIMEOUT_EnableInt(); // Make sure interrupts are enabled.
+ 0C1D 10                push X
+ 0C1E 7C0000            xcall _TX_TIMEOUT_EnableInt
+ 0C21                   .dbline 632
+ 0C21           ;               TX_TIMEOUT_Start();             // Start the timer.
+ 0C21 7C0000            xcall _TX_TIMEOUT_Start
+ 0C24 20                pop X
+ 0C25           L191:
+ 0C25                   .dbline 635
+ 0C25           ;               
+ 0C25           ;               while(!TIMEOUT)
+ 0C25           ;               {
+ 0C25                   .dbline 638
+ 0C25           ;                       // Do nothing while we wait for one timeout period.
+ 0C25           ;                       // This is to allow everyone to get in the right configuration.
+ 0C25           ;               }
+ 0C25           L192:
+ 0C25                   .dbline 634
+ 0C25 62D000            mov REG[0xd0],>_TIMEOUT
+ 0C28 3C0000            cmp [_TIMEOUT],0
+ 0C2B B006              jnz X60
+ 0C2D 3C0100            cmp [_TIMEOUT+1],0
+ 0C30 AFF4              jz L191
+ 0C32           X60:
+ 0C32                   .dbline 640
+ 0C32           ;               
+ 0C32           ;               TX_TIMEOUT_Stop();              // Stop the timer.
+ 0C32 10                push X
+ 0C33 7C0000            xcall _TX_TIMEOUT_Stop
+ 0C36 20                pop X
+ 0C37                   .dbline 641
+ 0C37           ;               TIMEOUT = 0;                    // Reset the timeout flag.
+ 0C37 62D000            mov REG[0xd0],>_TIMEOUT
+ 0C3A 550100            mov [_TIMEOUT+1],0
+ 0C3D 550000            mov [_TIMEOUT],0
+ 0C40                   .dbline 643
+ 0C40           ;               
+ 0C40           ;               STATE = TX_MODE;
+ 0C40 62D000            mov REG[0xd0],>_STATE
+ 0C43 550100            mov [_STATE+1],0
+ 0C46 550000            mov [_STATE],0
+ 0C49                   .dbline 644
+ 0C49           ;       }
+ 0C49           L189:
+ 0C49           L188:
+ 0C49           L186:
+ 0C49                   .dbline 647
+ 0C49           ;       
+ 0C49           ;       // Reconnect to the global bus.
+ 0C49           ;       PRT0GS |= 0b10111111;
+ 0C49 4302BF            or REG[0x2],-65
+ 0C4C                   .dbline -2
+ 0C4C           L182:
+ 0C4C 20                pop X
+ 0C4D                   .dbline 0 ; func end
+ 0C4D 7F                ret
+ 0C4E                   .dbsym l mode -5 I
+ 0C4E                   .dbend
+ 0C4E                   .dbfunc e unloadAllConfigs _unloadAllConfigs fV
+ 0C4E           _unloadAllConfigs::
+ 0C4E                   .dbline -1
+ 0C4E                   .dbline 653
+ 0C4E           ; }
+ 0C4E           ; 
+ 0C4E           ; // This function blindly unloads all user configurations. This will be called once,
+ 0C4E           ; // when the system initially has no known state.
+ 0C4E           ; void unloadAllConfigs(void)
+ 0C4E           ; {
+ 0C4E                   .dbline 654
+ 0C4E           ;       UnloadConfig_pc_listener();
+ 0C4E 7C0000            xcall _UnloadConfig_pc_listener
+ 0C51                   .dbline 655
+ 0C51           ;       UnloadConfig_receiver_config();
+ 0C51 7C0000            xcall _UnloadConfig_receiver_config
+ 0C54                   .dbline 656
+ 0C54           ;       UnloadConfig_transmitter_config();
+ 0C54 7C0000            xcall _UnloadConfig_transmitter_config
+ 0C57                   .dbline -2
+ 0C57           L194:
+ 0C57                   .dbline 0 ; func end
+ 0C57 7F                ret
+ 0C58                   .dbend
+ 0C58                   .dbfunc e unloadConfig _unloadConfig fV
+ 0C58           ;     config_num -> X-5
+ 0C58           _unloadConfig::
+ 0C58                   .dbline -1
+ 0C58 10                push X
+ 0C59 4F                mov X,SP
+ 0C5A                   .dbline 662
+ 0C5A           ; }
+ 0C5A           ; 
+ 0C5A           ; // This function unloads the configuration corresponding to the config number passed to it.
+ 0C5A           ; // We do this instead of unloadAllConfigs to cut down on set up time.
+ 0C5A           ; void unloadConfig(int config_num)
+ 0C5A           ; {
+ 0C5A                   .dbline 663
+ 0C5A           ;       if(config_num == PC_MODE)
+ 0C5A 3DFB00            cmp [X-5],0
+ 0C5D B00B              jnz L196
+ 0C5F 3DFC02            cmp [X-4],2
+ 0C62 B006              jnz L196
+ 0C64           X61:
+ 0C64                   .dbline 664
+ 0C64           ;       {
+ 0C64                   .dbline 665
+ 0C64           ;               UnloadConfig_pc_listener();
+ 0C64 7C0000            xcall _UnloadConfig_pc_listener
+ 0C67                   .dbline 666
+ 0C67           ;       }
+ 0C67 801D              xjmp L197
+ 0C69           L196:
+ 0C69                   .dbline 667
+ 0C69           ;       else if(config_num == RX_MODE)
+ 0C69 3DFB00            cmp [X-5],0
+ 0C6C B00B              jnz L198
+ 0C6E 3DFC01            cmp [X-4],1
+ 0C71 B006              jnz L198
+ 0C73           X62:
+ 0C73                   .dbline 668
+ 0C73           ;       {
+ 0C73                   .dbline 669
+ 0C73           ;               UnloadConfig_receiver_config();
+ 0C73 7C0000            xcall _UnloadConfig_receiver_config
+ 0C76                   .dbline 670
+ 0C76           ;       }
+ 0C76 800E              xjmp L199
+ 0C78           L198:
+ 0C78                   .dbline 671
+ 0C78           ;       else if(config_num == TX_MODE)
+ 0C78 3DFB00            cmp [X-5],0
+ 0C7B B009              jnz L200
+ 0C7D 3DFC00            cmp [X-4],0
+ 0C80 B004              jnz L200
+ 0C82           X63:
+ 0C82                   .dbline 672
+ 0C82           ;       {
+ 0C82                   .dbline 673
+ 0C82           ;               UnloadConfig_transmitter_config();
+ 0C82 7C0000            xcall _UnloadConfig_transmitter_config
+ 0C85                   .dbline 674
+ 0C85           ;       }
+ 0C85           L200:
+ 0C85           L199:
+ 0C85           L197:
+ 0C85                   .dbline -2
+ 0C85           L195:
+ 0C85 20                pop X
+ 0C86                   .dbline 0 ; func end
+ 0C86 7F                ret
+ 0C87                   .dbsym l config_num -5 I
+ 0C87                   .dbend
+ 0C87                   .dbfunc e initializeSlaves _initializeSlaves fV
+ 0C87           ;        maxPrev -> X+4
+ 0C87           ;              i -> X+2
+ 0C87           ;        currVal -> X+0
+ 0C87           _initializeSlaves::
+ 0C87                   .dbline -1
+ 0C87 10                push X
+ 0C88 4F                mov X,SP
+ 0C89 3806              add SP,6
+ 0C8B                   .dbline 678
+ 0C8B           ; }
+ 0C8B           ; 
+ 0C8B           ; void initializeSlaves(void)
+ 0C8B           ; {
+ 0C8B                   .dbline 679
+ 0C8B           ;       int maxPrev = 0;        // The maximum previous value.
+ 0C8B 560500            mov [X+5],0
+ 0C8E 560400            mov [X+4],0
+ 0C91                   .dbline 681
+ 0C91           ;       int currVal;            // The current number of modules found.
+ 0C91           ;       int i = 0;                      // An int for looping.
+ 0C91 560300            mov [X+3],0
+ 0C94 560200            mov [X+2],0
+ 0C97           L203:
+ 0C97                   .dbline 684
+ 0C97           ;       
+ 0C97           ;       // Do nothing while we find nothing.
+ 0C97           ;       while(!initSweep()) { }
+ 0C97                   .dbline 684
+ 0C97           L204:
+ 0C97                   .dbline 684
+ 0C97 9081              xcall _initSweep
+ 0C99 62D000            mov REG[0xd0],>__r0
+ 0C9C 3C0000            cmp [__r0],0
+ 0C9F B006              jnz X64
+ 0CA1 3C0000            cmp [__r1],0
+ 0CA4 AFF2              jz L203
+ 0CA6           X64:
+ 0CA6 803F              xjmp L207
+ 0CA8           L206:
+ 0CA8                   .dbline 687
+ 0CA8           ;       
+ 0CA8           ;       while(!maxPrev)
+ 0CA8           ;       {
+ 0CA8                   .dbline 689
+ 0CA8           ;               // Find the maximum value of modules found, it's our number.
+ 0CA8           ;               for(i = 0; i < NUM_SWEEPS; i++)
+ 0CA8 560300            mov [X+3],0
+ 0CAB 560200            mov [X+2],0
+ 0CAE           L209:
+ 0CAE                   .dbline 690
+ 0CAE           ;               {
+ 0CAE                   .dbline 691
+ 0CAE           ;                       currVal = initSweep();
+ 0CAE 906A              xcall _initSweep
+ 0CB0 62D000            mov REG[0xd0],>__r0
+ 0CB3 5100              mov A,[__r1]
+ 0CB5 5401              mov [X+1],A
+ 0CB7 5100              mov A,[__r0]
+ 0CB9 5400              mov [X+0],A
+ 0CBB                   .dbline 693
+ 0CBB           ;                       
+ 0CBB           ;                       if(currVal > maxPrev)
+ 0CBB 5205              mov A,[X+5]
+ 0CBD 1301              sub A,[X+1]
+ 0CBF 5200              mov A,[X+0]
+ 0CC1 3180              xor A,-128
+ 0CC3 5300              mov [__rX],A
+ 0CC5 5204              mov A,[X+4]
+ 0CC7 3180              xor A,-128
+ 0CC9 1A00              sbb A,[__rX]
+ 0CCB D009              jnc L213
+ 0CCD           X65:
+ 0CCD                   .dbline 694
+ 0CCD           ;                       {
+ 0CCD                   .dbline 695
+ 0CCD           ;                               maxPrev = currVal;
+ 0CCD 5201              mov A,[X+1]
+ 0CCF 5405              mov [X+5],A
+ 0CD1 5200              mov A,[X+0]
+ 0CD3 5404              mov [X+4],A
+ 0CD5                   .dbline 696
+ 0CD5           ;                       }
+ 0CD5           L213:
+ 0CD5                   .dbline 697
+ 0CD5           ;               }
+ 0CD5           L210:
+ 0CD5                   .dbline 689
+ 0CD5 7703              inc [X+3]
+ 0CD7 0F0200            adc [X+2],0
+ 0CDA                   .dbline 689
+ 0CDA 5203              mov A,[X+3]
+ 0CDC 1105              sub A,5
+ 0CDE 5202              mov A,[X+2]
+ 0CE0 3180              xor A,-128
+ 0CE2 1980              sbb A,(0 ^ 0x80)
+ 0CE4 CFC9              jc L209
+ 0CE6           X66:
+ 0CE6                   .dbline 698
+ 0CE6           ;       }
+ 0CE6           L207:
+ 0CE6                   .dbline 686
+ 0CE6 3D0400            cmp [X+4],0
+ 0CE9 B006              jnz X67
+ 0CEB 3D0500            cmp [X+5],0
+ 0CEE AFB9              jz L206
+ 0CF0           X67:
+ 0CF0           L215:
+ 0CF0                   .dbline 701
+ 0CF0           ;       
+ 0CF0           ;       // Sweep until we get the max number again.
+ 0CF0           ;       while(initSweep() != maxPrev) { }
+ 0CF0                   .dbline 701
+ 0CF0           L216:
+ 0CF0                   .dbline 701
+ 0CF0 9028              xcall _initSweep
+ 0CF2 62D000            mov REG[0xd0],>__r0
+ 0CF5 5100              mov A,[__r0]
+ 0CF7 3B04              cmp A,[X+4]
+ 0CF9 BFF6              jnz L215
+ 0CFB 5100              mov A,[__r1]
+ 0CFD 3B05              cmp A,[X+5]
+ 0CFF BFF0              jnz L215
+ 0D01           X68:
+ 0D01                   .dbline 704
+ 0D01           ;       
+ 0D01           ;       // Store the number of modules.
+ 0D01           ;       NUM_MODULES = maxPrev;
+ 0D01 62D000            mov REG[0xd0],>_NUM_MODULES
+ 0D04 5205              mov A,[X+5]
+ 0D06 5301              mov [_NUM_MODULES+1],A
+ 0D08 5204              mov A,[X+4]
+ 0D0A 5300              mov [_NUM_MODULES],A
+ 0D0C                   .dbline 707
+ 0D0C           ;       
+ 0D0C           ;       // Switch back to PC mode.
+ 0D0C           ;       configToggle(PC_MODE);
+ 0D0C 5000              mov A,0
+ 0D0E 08                push A
+ 0D0F 5002              mov A,2
+ 0D11 08                push A
+ 0D12 9E5B              xcall _configToggle
+ 0D14 38FE              add SP,-2
+ 0D16                   .dbline -2
+ 0D16           L202:
+ 0D16 38FA              add SP,-6
+ 0D18 20                pop X
+ 0D19                   .dbline 0 ; func end
+ 0D19 7F                ret
+ 0D1A                   .dbsym l maxPrev 4 I
+ 0D1A                   .dbsym l i 2 I
+ 0D1A                   .dbsym l currVal 0 I
+ 0D1A                   .dbend
+ 0D1A                   .dbfunc e initSweep _initSweep fI
+ 0D1A           ;   num_timeouts -> X+6
+ 0D1A           ;     ping_tries -> X+4
+ 0D1A           ; currNumModules -> X+2
+ 0D1A           ;              i -> X+0
+ 0D1A           _initSweep::
+ 0D1A                   .dbline -1
+ 0D1A 10                push X
+ 0D1B 4F                mov X,SP
+ 0D1C 3808              add SP,8
+ 0D1E                   .dbline 711
+ 0D1E           ; }
+ 0D1E           ; 
+ 0D1E           ; int initSweep(void)
+ 0D1E           ; {
+ 0D1E                   .dbline 712
+ 0D1E           ;       int i = 0;                                      // An iterator for looping.
+ 0D1E 560100            mov [X+1],0
+ 0D21 560000            mov [X+0],0
+ 0D24                   .dbline 713
+ 0D24           ;       int num_timeouts = 0;           // The number of consecutive timeouts.
+ 0D24 560700            mov [X+7],0
+ 0D27 560600            mov [X+6],0
+ 0D2A                   .dbline 714
+ 0D2A           ;       int ping_tries = 5;                     // The number of times to try a ping on an unregistered module.
+ 0D2A 560505            mov [X+5],5
+ 0D2D 560400            mov [X+4],0
+ 0D30                   .dbline 715
+ 0D30           ;       int currNumModules = 0;         // The number of modules found in this current sweep.
+ 0D30 560300            mov [X+3],0
+ 0D33 560200            mov [X+2],0
+ 0D36                   .dbline 718
+ 0D36           ;       
+ 0D36           ;       // Clear the modules.
+ 0D36           ;       clearConfig();
+ 0D36 7C0219            xcall _clearConfig
+ 0D39                   .dbline 721
+ 0D39           ;               
+ 0D39           ;       // Send out a probing message.
+ 0D39           ;       sayHello();
+ 0D39 7C0273            xcall _sayHello
+ 0D3C 80C0              xjmp L220
+ 0D3E           L219:
+ 0D3E                   .dbline 726
+ 0D3E           ;       
+ 0D3E           ;       // This loop continuously probes and listens at intervals
+ 0D3E           ;       // set by the RX_TIMEOUT_DURATION variable.
+ 0D3E           ;       while(num_timeouts < MAX_TIMEOUTS)
+ 0D3E           ;       {       
+ 0D3E                   .dbline 727
+ 0D3E           ;               if(validTransmission())
+ 0D3E 7C02CB            xcall _validTransmission
+ 0D41 62D000            mov REG[0xd0],>__r0
+ 0D44 3C0000            cmp [__r0],0
+ 0D47 B006              jnz X69
+ 0D49 3C0000            cmp [__r1],0
+ 0D4C A08D              jz L222
+ 0D4E           X69:
+ 0D4E                   .dbline 728
+ 0D4E           ;               {
+ 0D4E                   .dbline 729
+ 0D4E           ;                       if(COMMAND_TYPE == HELLO_BYTE)  // Someone else is out there!
+ 0D4E 62D000            mov REG[0xd0],>_COMMAND_TYPE
+ 0D51 3C00C8            cmp [_COMMAND_TYPE],-56
+ 0D54 B0A8              jnz L223
+ 0D56                   .dbline 730
+ 0D56           ;                       {
+ 0D56                   .dbline 732
+ 0D56           ;                               // If this is for me, assign them an ID.
+ 0D56           ;                               if(COMMAND_DESTINATION == MASTER_ID)
+ 0D56 62D000            mov REG[0xd0],>_COMMAND_DESTINATION
+ 0D59 3C0000            cmp [_COMMAND_DESTINATION],0
+ 0D5C B0A0              jnz L223
+ 0D5E                   .dbline 733
+ 0D5E           ;                               {
+ 0D5E                   .dbline 734
+ 0D5E           ;                                       currNumModules++;               // Increment the number of modules connected.
+ 0D5E 7703              inc [X+3]
+ 0D60 0F0200            adc [X+2],0
+ 0D63                   .dbline 735
+ 0D63           ;                                       num_timeouts = 0;               // Reset number of timeouts since we found someone.
+ 0D63 560700            mov [X+7],0
+ 0D66 560600            mov [X+6],0
+ 0D69                   .dbline 737
+ 0D69           ;               
+ 0D69           ;                                       if(!assignID(currNumModules))
+ 0D69 5202              mov A,[X+2]
+ 0D6B 08                push A
+ 0D6C 5203              mov A,[X+3]
+ 0D6E 08                push A
+ 0D6F 7C0123            xcall _assignID
+ 0D72 38FE              add SP,-2
+ 0D74 62D000            mov REG[0xd0],>__r0
+ 0D77 3C0000            cmp [__r0],0
+ 0D7A B082              jnz L223
+ 0D7C 3C0000            cmp [__r1],0
+ 0D7F B07D              jnz L223
+ 0D81           X70:
+ 0D81                   .dbline 738
+ 0D81           ;                                       {
+ 0D81                   .dbline 742
+ 0D81           ;                                               // If the module did not respond that the ID was assigned,
+ 0D81           ;                                               // make an effort to ping it in case that transmission was lost
+ 0D81           ;                                               // before ultimately deciding that the module didn't configure.
+ 0D81           ;                                               for(i = 0; i < ping_tries; i++)
+ 0D81 560100            mov [X+1],0
+ 0D84 560000            mov [X+0],0
+ 0D87 802A              xjmp L233
+ 0D89           L230:
+ 0D89                   .dbline 743
+ 0D89           ;                                               {       
+ 0D89                   .dbline 744
+ 0D89           ;                                                       if(pingModule(currNumModules))
+ 0D89 5202              mov A,[X+2]
+ 0D8B 08                push A
+ 0D8C 5203              mov A,[X+3]
+ 0D8E 08                push A
+ 0D8F 7C0034            xcall _pingModule
+ 0D92 38FE              add SP,-2
+ 0D94 62D000            mov REG[0xd0],>__r0
+ 0D97 3C0000            cmp [__r0],0
+ 0D9A B006              jnz X71
+ 0D9C 3C0000            cmp [__r1],0
+ 0D9F A00D              jz L234
+ 0DA1           X71:
+ 0DA1                   .dbline 745
+ 0DA1           ;                                                       {
+ 0DA1                   .dbline 746
+ 0DA1           ;                                                               i = ping_tries+1;
+ 0DA1 5205              mov A,[X+5]
+ 0DA3 0101              add A,1
+ 0DA5 5401              mov [X+1],A
+ 0DA7 5204              mov A,[X+4]
+ 0DA9 0900              adc A,0
+ 0DAB 5400              mov [X+0],A
+ 0DAD                   .dbline 747
+ 0DAD           ;                                                       }
+ 0DAD           L234:
+ 0DAD                   .dbline 748
+ 0DAD           ;                                               }
+ 0DAD           L231:
+ 0DAD                   .dbline 742
+ 0DAD 7701              inc [X+1]
+ 0DAF 0F0000            adc [X+0],0
+ 0DB2           L233:
+ 0DB2                   .dbline 742
+ 0DB2 5201              mov A,[X+1]
+ 0DB4 1305              sub A,[X+5]
+ 0DB6 5204              mov A,[X+4]
+ 0DB8 3180              xor A,-128
+ 0DBA 62D000            mov REG[0xd0],>__r0
+ 0DBD 5300              mov [__rX],A
+ 0DBF 5200              mov A,[X+0]
+ 0DC1 3180              xor A,-128
+ 0DC3 1A00              sbb A,[__rX]
+ 0DC5 CFC3              jc L230
+ 0DC7           X72:
+ 0DC7                   .dbline 751
+ 0DC7           ;                                               
+ 0DC7           ;                                               // If we landed right at ping_tries, we failed.
+ 0DC7           ;                                               if(i == ping_tries)
+ 0DC7 5200              mov A,[X+0]
+ 0DC9 3B04              cmp A,[X+4]
+ 0DCB B031              jnz L223
+ 0DCD 5201              mov A,[X+1]
+ 0DCF 3B05              cmp A,[X+5]
+ 0DD1 B02B              jnz L223
+ 0DD3           X73:
+ 0DD3                   .dbline 752
+ 0DD3           ;                                               {
+ 0DD3                   .dbline 753
+ 0DD3           ;                                                       currNumModules--;
+ 0DD3 7B03              dec [X+3]
+ 0DD5 1F0200            sbb [X+2],0
+ 0DD8                   .dbline 754
+ 0DD8           ;                                               }
+ 0DD8                   .dbline 755
+ 0DD8           ;                                       }
+ 0DD8                   .dbline 756
+ 0DD8           ;                               }
+ 0DD8                   .dbline 757
+ 0DD8           ;                       }
+ 0DD8                   .dbline 758
+ 0DD8           ;               }
+ 0DD8 8024              xjmp L223
+ 0DDA           L222:
+ 0DDA                   .dbline 759
+ 0DDA           ;               else if(TIMEOUT >= RX_TIMEOUT_DURATION)
+ 0DDA 62D000            mov REG[0xd0],>_TIMEOUT
+ 0DDD 5101              mov A,[_TIMEOUT+1]
+ 0DDF 1103              sub A,3
+ 0DE1 5100              mov A,[_TIMEOUT]
+ 0DE3 3180              xor A,-128
+ 0DE5 1980              sbb A,(0 ^ 0x80)
+ 0DE7 C015              jc L238
+ 0DE9           X74:
+ 0DE9                   .dbline 760
+ 0DE9           ;               {       
+ 0DE9                   .dbline 761
+ 0DE9           ;                       num_timeouts++;
+ 0DE9 7707              inc [X+7]
+ 0DEB 0F0600            adc [X+6],0
+ 0DEE                   .dbline 764
+ 0DEE           ;                       
+ 0DEE           ;                       // If we are not maxed out on modules, look for more.
+ 0DEE           ;                       if(currNumModules < MAX_MODULES)
+ 0DEE 5203              mov A,[X+3]
+ 0DF0 11FA              sub A,-6
+ 0DF2 5202              mov A,[X+2]
+ 0DF4 3180              xor A,-128
+ 0DF6 1980              sbb A,(0 ^ 0x80)
+ 0DF8 D004              jnc L240
+ 0DFA           X75:
+ 0DFA                   .dbline 765
+ 0DFA           ;                       {
+ 0DFA                   .dbline 766
+ 0DFA           ;                               sayHello();
+ 0DFA 7C0273            xcall _sayHello
+ 0DFD                   .dbline 767
+ 0DFD           ;                       }
+ 0DFD           L240:
+ 0DFD                   .dbline 768
+ 0DFD           ;               }
+ 0DFD           L238:
+ 0DFD           L223:
+ 0DFD                   .dbline 769
+ 0DFD           ;       }
+ 0DFD           L220:
+ 0DFD                   .dbline 725
+ 0DFD 5207              mov A,[X+7]
+ 0DFF 1103              sub A,3
+ 0E01 5206              mov A,[X+6]
+ 0E03 3180              xor A,-128
+ 0E05 1980              sbb A,(0 ^ 0x80)
+ 0E07 CF36              jc L219
+ 0E09           X76:
+ 0E09                   .dbline 772
+ 0E09           ;       
+ 0E09           ;       // If we didn't find any new modules, check to see if some already exist.
+ 0E09           ;       if(!currNumModules)
+ 0E09 3D0200            cmp [X+2],0
+ 0E0C B056              jnz L242
+ 0E0E 3D0300            cmp [X+3],0
+ 0E11 B051              jnz L242
+ 0E13           X77:
+ 0E13                   .dbline 773
+ 0E13           ;       {
+ 0E13                   .dbline 775
+ 0E13           ;               // Try to ping the next module up from our current number ping_tries times.
+ 0E13           ;               for(i = 0; i < ping_tries; i++)
+ 0E13 560100            mov [X+1],0
+ 0E16 560000            mov [X+0],0
+ 0E19 8034              xjmp L247
+ 0E1B           L244:
+ 0E1B                   .dbline 776
+ 0E1B           ;               {       
+ 0E1B                   .dbline 777
+ 0E1B           ;                       if(pingModule(currNumModules+1))
+ 0E1B 62D000            mov REG[0xd0],>__r0
+ 0E1E 5203              mov A,[X+3]
+ 0E20 0101              add A,1
+ 0E22 5300              mov [__r1],A
+ 0E24 5202              mov A,[X+2]
+ 0E26 0900              adc A,0
+ 0E28 08                push A
+ 0E29 5100              mov A,[__r1]
+ 0E2B 08                push A
+ 0E2C 7C0034            xcall _pingModule
+ 0E2F 38FE              add SP,-2
+ 0E31 62D000            mov REG[0xd0],>__r0
+ 0E34 3C0000            cmp [__r0],0
+ 0E37 B006              jnz X78
+ 0E39 3C0000            cmp [__r1],0
+ 0E3C A00C              jz L248
+ 0E3E           X78:
+ 0E3E                   .dbline 778
+ 0E3E           ;                       {
+ 0E3E                   .dbline 779
+ 0E3E           ;                               currNumModules++;
+ 0E3E 7703              inc [X+3]
+ 0E40 0F0200            adc [X+2],0
+ 0E43                   .dbline 780
+ 0E43           ;                               i = 0;
+ 0E43 560100            mov [X+1],0
+ 0E46 560000            mov [X+0],0
+ 0E49                   .dbline 781
+ 0E49           ;                       }
+ 0E49           L248:
+ 0E49                   .dbline 782
+ 0E49           ;               }
+ 0E49           L245:
+ 0E49                   .dbline 775
+ 0E49 7701              inc [X+1]
+ 0E4B 0F0000            adc [X+0],0
+ 0E4E           L247:
+ 0E4E                   .dbline 775
+ 0E4E 5201              mov A,[X+1]
+ 0E50 1305              sub A,[X+5]
+ 0E52 5204              mov A,[X+4]
+ 0E54 3180              xor A,-128
+ 0E56 62D000            mov REG[0xd0],>__r0
+ 0E59 5300              mov [__rX],A
+ 0E5B 5200              mov A,[X+0]
+ 0E5D 3180              xor A,-128
+ 0E5F 1A00              sbb A,[__rX]
+ 0E61 CFB9              jc L244
+ 0E63           X79:
+ 0E63                   .dbline 783
+ 0E63           ;       }
+ 0E63           L242:
+ 0E63                   .dbline 785
+ 0E63           ;       
+ 0E63           ;       return currNumModules;
+ 0E63 62D000            mov REG[0xd0],>__r0
+ 0E66 5203              mov A,[X+3]
+ 0E68 5300              mov [__r1],A
+ 0E6A 5202              mov A,[X+2]
+ 0E6C 5300              mov [__r0],A
+ 0E6E                   .dbline -2
+ 0E6E           L218:
+ 0E6E 38F8              add SP,-8
+ 0E70 20                pop X
+ 0E71                   .dbline 0 ; func end
+ 0E71 7F                ret
+ 0E72                   .dbsym l num_timeouts 6 I
+ 0E72                   .dbsym l ping_tries 4 I
+ 0E72                   .dbsym l currNumModules 2 I
+ 0E72                   .dbsym l i 0 I
+ 0E72                   .dbend
+ 0E72                   .dbfunc e xmitWait _xmitWait fV
+ 0E72           ;              i -> X+0
+ 0E72           _xmitWait::
+ 0E72                   .dbline -1
+ 0E72 10                push X
+ 0E73 4F                mov X,SP
+ 0E74 3802              add SP,2
+ 0E76                   .dbline 789
+ 0E76           ; }
+ 0E76           ; 
+ 0E76           ; void xmitWait(void)
+ 0E76           ; {
+ 0E76                   .dbline 792
+ 0E76           ;       int i;
+ 0E76           ;       
+ 0E76           ;       for(i = 0; i < 25; i++)
+ 0E76 560100            mov [X+1],0
+ 0E79 560000            mov [X+0],0
+ 0E7C           L251:
+ 0E7C                   .dbline 793
+ 0E7C           ;       {
+ 0E7C                   .dbline 795
+ 0E7C           ;               // Sit here and spin for about 50 microseconds.
+ 0E7C           ;       }
+ 0E7C           L252:
+ 0E7C                   .dbline 792
+ 0E7C 7701              inc [X+1]
+ 0E7E 0F0000            adc [X+0],0
+ 0E81                   .dbline 792
+ 0E81 5201              mov A,[X+1]
+ 0E83 1119              sub A,25
+ 0E85 5200              mov A,[X+0]
+ 0E87 3180              xor A,-128
+ 0E89 1980              sbb A,(0 ^ 0x80)
+ 0E8B CFF0              jc L251
+ 0E8D           X80:
+ 0E8D                   .dbline -2
+ 0E8D           L250:
+ 0E8D 38FE              add SP,-2
+ 0E8F 20                pop X
+ 0E90                   .dbline 0 ; func end
+ 0E90 7F                ret
+ 0E91                   .dbsym l i 0 I
+ 0E91                   .dbend
+ 0E91                   .dbfunc e TX_TIMEOUT_ISR _TX_TIMEOUT_ISR fV
+ 0E91           _TX_TIMEOUT_ISR::
+ 0E91                   .dbline -1
+ 0E91 71C0              or F,-64
+ 0E93 08                push A
+ 0E94 5DD0              mov A,REG[0xd0]
+ 0E96 08                push A
+ 0E97                   .dbline 799
+ 0E97           ; }
+ 0E97           ; 
+ 0E97           ; void TX_TIMEOUT_ISR(void)
+ 0E97           ; {     
+ 0E97                   .dbline 800
+ 0E97           ;       TIMEOUT++;
+ 0E97 62D000            mov REG[0xd0],>_TIMEOUT
+ 0E9A 7601              inc [_TIMEOUT+1]
+ 0E9C 0E0000            adc [_TIMEOUT],0
+ 0E9F                   .dbline 802
+ 0E9F           ;       
+ 0E9F           ;       M8C_ClearIntFlag(INT_CLR0,TX_TIMEOUT_INT_MASK);
+ 0E9F 62DAFD            mov REG[0xda],-3
+ 0EA2                   .dbline -2
+ 0EA2           L255:
+ 0EA2 18                pop A
+ 0EA3 60D0              mov REG[208],A
+ 0EA5 18                pop A
+ 0EA6                   .dbline 0 ; func end
+ 0EA6 7E                reti
+ 0EA7                   .dbend
+ 0EA7                   .dbfunc e RX_TIMEOUT_ISR _RX_TIMEOUT_ISR fV
+ 0EA7           _RX_TIMEOUT_ISR::
+ 0EA7                   .dbline -1
+ 0EA7 71C0              or F,-64
+ 0EA9 08                push A
+ 0EAA 5DD0              mov A,REG[0xd0]
+ 0EAC 08                push A
+ 0EAD                   .dbline 806
+ 0EAD           ; }
+ 0EAD           ; 
+ 0EAD           ; void RX_TIMEOUT_ISR(void)
+ 0EAD           ; {     
+ 0EAD                   .dbline 807
+ 0EAD           ;       TIMEOUT++;
+ 0EAD 62D000            mov REG[0xd0],>_TIMEOUT
+ 0EB0 7601              inc [_TIMEOUT+1]
+ 0EB2 0E0000            adc [_TIMEOUT],0
+ 0EB5                   .dbline 809
+ 0EB5           ;       
+ 0EB5           ;       M8C_ClearIntFlag(INT_CLR0,RX_TIMEOUT_INT_MASK);
+ 0EB5 62DAFD            mov REG[0xda],-3
+ 0EB8                   .dbline -2
+ 0EB8           L256:
+ 0EB8 18                pop A
+ 0EB9 60D0              mov REG[208],A
+ 0EBB 18                pop A
+ 0EBC                   .dbline 0 ; func end
+ 0EBC 7E                reti
+ 0EBD                   .dbend
+                        .area data(ram, con, rel)
+ 0000                   .dbfile C:\Users\Admin\DOCUME~1\PSOCDE~1.0PR\THC055~1\THESIS~1\main.c
+ 0000           _STATE::
+ 0000 0000              .byte 0,0
+ 0002                   .dbsym e STATE _STATE I
+                        .area data(ram, con, rel)
+ 0000                   .dbfile C:\Users\Admin\DOCUME~1\PSOCDE~1.0PR\THC055~1\THESIS~1\main.c
+ 0000           _PARAM::
+ 0000 00000000000000000000      .byte 0,0,0,0,0,0,0,0,0,0
+ 000A                   .dbsym e PARAM _PARAM A[10:10]c
+                        .area data(ram, con, rel)
+ 0000                   .dbfile C:\Users\Admin\DOCUME~1\PSOCDE~1.0PR\THC055~1\THESIS~1\main.c
+ 0000           _COMMAND_TYPE::
+ 0000 00                .byte 0
+ 0001                   .dbsym e COMMAND_TYPE _COMMAND_TYPE c
+                        .area data(ram, con, rel)
+ 0000                   .dbfile C:\Users\Admin\DOCUME~1\PSOCDE~1.0PR\THC055~1\THESIS~1\main.c
+ 0000           _COMMAND_DESTINATION::
+ 0000 00                .byte 0
+ 0001                   .dbsym e COMMAND_DESTINATION _COMMAND_DESTINATION c
+                        .area data(ram, con, rel)
+ 0000                   .dbfile C:\Users\Admin\DOCUME~1\PSOCDE~1.0PR\THC055~1\THESIS~1\main.c
+ 0000           _COMMAND_SOURCE::
+ 0000 00                .byte 0
+ 0001                   .dbsym e COMMAND_SOURCE _COMMAND_SOURCE c
+                        .area data(ram, con, rel)
+ 0000                   .dbfile C:\Users\Admin\DOCUME~1\PSOCDE~1.0PR\THC055~1\THESIS~1\main.c
+ 0000           _NUM_MODULES::
+ 0000 0000              .byte 0,0
+ 0002                   .dbsym e NUM_MODULES _NUM_MODULES I
+                        .area data(ram, con, rel)
+ 0000                   .dbfile C:\Users\Admin\DOCUME~1\PSOCDE~1.0PR\THC055~1\THESIS~1\main.c
+ 0000           _TIMEOUT::
+ 0000 0000              .byte 0,0
+ 0002                   .dbsym e TIMEOUT _TIMEOUT I

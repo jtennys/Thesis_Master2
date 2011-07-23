@@ -1,0 +1,7 @@
+flash 20B6 SRAM   85:
+ 00 10 bytes
+flash 20BA SRAM   98:
+ 00 6 bytes
+flash 20BE SRAM   A0:
+ <size at next line>   0  0  0
+  [size:] 3 bytes
