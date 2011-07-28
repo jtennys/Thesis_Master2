@@ -26,21 +26,23 @@ lib/tx_timeoutint.asm
 Linking..
 LMM info: area 'InterruptRAM' uses 5 bytes in SRAM page 0
 LMM info: area 'COMP_SERIAL_RAM' item of 64 bytes allocated in SRAM page 0
-LMM info: area 'RECEIVE_RAM' item of 64 bytes allocated in SRAM page 0
+LMM info: area 'RECEIVE_RAM' item of 16 bytes allocated in SRAM page 0
 LMM info: area 'data' item of 10 bytes allocated in SRAM page 0
 LMM info: area 'virtual_registers' uses 9 bytes in SRAM page 0
 LMM info: area 'data' item of 2 bytes allocated in SRAM page 0
 LMM info: area 'data' item of 2 bytes allocated in SRAM page 0
 LMM info: area 'data' item of 2 bytes allocated in SRAM page 0
+LMM info: area 'data' item of 2 bytes allocated in SRAM page 0
+LMM info: area 'data' item of 2 bytes allocated in SRAM page 0
 LMM info: area 'COMP_SERIAL_RAM' item of 1 bytes allocated in SRAM page 0
+LMM info: area 'data' item of 1 bytes allocated in SRAM page 0
+LMM info: area 'data' item of 1 bytes allocated in SRAM page 0
 LMM info: area 'RECEIVE_RAM' item of 1 bytes allocated in SRAM page 0
-LMM info: area 'data' item of 1 bytes allocated in SRAM page 0
-LMM info: area 'data' item of 1 bytes allocated in SRAM page 0
 LMM info: area 'data' item of 1 bytes allocated in SRAM page 0
 LMM info: area 'receiver_config_RAM' uses 0 bytes in SRAM page 0
 LMM info: area 'transmitter_config_RAM' uses 0 bytes in SRAM page 0
-  ROM 48% full. 7779 bytes used (does not include absolute areas).
-  RAM 21% full. 163 bytes used (does not include stack usage).
+  ROM 49% full. 7921 bytes used (does not include absolute areas).
+  RAM 15% full. 119 bytes used (does not include stack usage).
 idata dump at output/Thesis_Master.idata
  
-Thesis_Master - 0 error(s) 0 warning(s) 17:00:34
+Thesis_Master - 0 error(s) 0 warning(s) 12:09:44

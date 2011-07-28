@@ -43,13 +43,13 @@
 // These defines are used for transmission timing.
 #define 	RX_TIMEOUT_DURATION			(3)		// This is receive wait time in 1 ms units.
 
-#define		SERVO_FIND_TIME				(50)	// The wait time after issuing clear config.
+#define		SERVO_FIND_TIME				(24)	// The wait time after issuing clear config.
 
 #define		MAX_TIMEOUTS				(5)		// Number of timeouts allowed before hello mode exit.
 #define		NUM_SWEEPS					(5)		// The number of module sweeps to do at init.
 
 // This is the maximum number of allowable modules per branch out from the master
-#define		MAX_MODULES					(250)
+#define		MAX_MODULES					(9)
 
 #define		SERVO_START					(255)
 
@@ -88,6 +88,8 @@ void xmitWait(void);
 int TIMEOUT;
 
 int NUM_MODULES;			// Stores the number of modules that have been discovered.
+int PREV_NUM_MODULES;		// Stores the previous number of modules that has been discovered.
+int SUGGESTED_NUM_MODULES;	// Stores the module number that is suggested from the PC.
 char COMMAND_SOURCE;		// Stores who the current command is from.
 char COMMAND_DESTINATION;	// Stores who the current command is for.
 char COMMAND_TYPE;			// Stores the type of command that was just read.
@@ -98,6 +100,8 @@ void main()
 {	
 	// Initialize the number of modules.
 	NUM_MODULES = 0;
+	PREV_NUM_MODULES = 1;
+	SUGGESTED_NUM_MODULES = MAX_MODULES;
 	
 	// Activate GPIO ISR.
 	M8C_EnableIntMask(INT_MSK0,INT_MSK0_GPIO);
@@ -322,6 +326,19 @@ void decodeTransmission(void)
 		{
 			// Reset
 			NUM_MODULES = 0;
+			if(param = COMP_SERIAL_szGetParam())
+			{
+				if((param[0] >= '1') && (param[0] <= '9'))
+				{
+					PREV_NUM_MODULES = param[0] - 48;
+					SUGGESTED_NUM_MODULES = PREV_NUM_MODULES;
+				}
+			}
+			else
+			{
+				PREV_NUM_MODULES = 1;
+				SUGGESTED_NUM_MODULES = MAX_MODULES;
+			}
 		}
 		else if((param[0] == 'n') || (param[0] == 'N'))
 		{
@@ -666,27 +683,31 @@ void initializeSlaves(void)
 	int i = 0;			// An int for looping.
 	
 	// Do nothing while we find nothing.
-	while(!initSweep()) { }
+	//while(!initSweep()) { }
 	
-	while(!maxPrev)
+	// Find the maximum value of modules found, it's our number.
+	while(maxPrev < PREV_NUM_MODULES)
 	{
-		// Find the maximum value of modules found, it's our number.
-		for(i = 0; i < NUM_SWEEPS; i++)
-		{
+		//for(i = 0; i < NUM_SWEEPS; i++)
+		//{
 			currVal = initSweep();
 			
 			if(currVal > maxPrev)
 			{
 				maxPrev = currVal;
 			}
-		}
+		//}
 	}
 	
 	// Sweep until we get the max number again.
-	while(initSweep() != maxPrev) { }
+//	if(currVal != maxPrev)
+//	{
+//		while(initSweep() != maxPrev) { }
+//	}
 	
 	// Store the number of modules.
 	NUM_MODULES = maxPrev;
+	PREV_NUM_MODULES = NUM_MODULES;
 	
 	// Switch back to PC mode.
 	configToggle(PC_MODE);
@@ -707,9 +728,13 @@ int initSweep(void)
 	while(num_timeouts < MAX_TIMEOUTS)
 	{
 		// If we are not maxed out on modules, look for more.
-		if(currNumModules < MAX_MODULES)
+		if(currNumModules < SUGGESTED_NUM_MODULES)
 		{
 			sayHello();
+		}
+		else
+		{
+			num_timeouts = MAX_TIMEOUTS;
 		}
 			
 		if(validTransmission())
