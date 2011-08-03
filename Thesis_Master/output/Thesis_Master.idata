@@ -1,10 +1,10 @@
-flash 208B SRAM   55:
+flash 2074 SRAM   55:
  00 10 bytes
-flash 208F SRAM   68:
+flash 2078 SRAM   68:
  00 10 bytes
-flash 2093 SRAM   73:
+flash 207C SRAM   73:
  <size at next line>   0  0
   [size:] 2 bytes
-flash 2098 SRAM   76:
+flash 2081 SRAM   76:
  <size at next line>   0
   [size:] 1 bytes

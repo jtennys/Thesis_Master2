@@ -1,4 +1,4 @@
-  ROM 49% full. 7931 bytes used (does not include absolute areas).
+  ROM 49% full. 7908 bytes used (does not include absolute areas).
   RAM 15% full. 119 bytes used (does not include stack usage).
 
 Area                               Addr   Size   Decimal Bytes (Attributes)
@@ -293,40 +293,39 @@ Area                               Addr   Size   Decimal Bytes (Attributes)
 
 Area                               Addr   Size   Decimal Bytes (Attributes)
 --------------------------------   ----   ----   ------- ----- ------------
-                            text   0DBE   12CD =   4813. bytes (rel,con,rom)
+                            text   0DBE   12B6 =   4790. bytes (rel,con,rom)
 
        Addr  Global Symbol
       -----  --------------------------------
-       0DBE  _main
        0DBE  __text_start
+       0DBE  _main
        0E04  _pingModule
-       0EAC  _assignID
-       0F5B  _clearConfig
-       0FC7  _sayHello
-       1024  _validResponse
-       1131  _decodeTransmission
-       1815  _servoInstruction
-       18B8  _longServoInstruction
-       1969  _configToggle
-       1A2A  _unloadAllConfigs
-       1A34  _unloadConfig
-       1A63  _initializeChildren
-       1ADA  _initSweep
-       1BE8  _xmitWait
-       1C07  _txConfigWait
-       1C28  _TX_TIMEOUT_ISR
-       1C3E  _RX_TIMEOUT_ISR
-       1C54  Dispatch_INTERRUPT_10
-       1C7E  Dispatch_INTERRUPT_9
-       1C9D  __divmod_16X16_16
-       1CEB  __divmodu_16X16_16
-       1CF6  __i_div16_block_util
-       1D2F  _atoi
-       1E70  _itoa
-       2049  _isdigit
-       206A  _isspace
-       209E  __xidata_end
-       208B  __text_end
+       0EA7  _assignID
+       0F51  _clearConfig
+       0FB8  _sayHello
+       1010  _validResponse
+       111D  _decodeTransmission
+       1801  _servoInstruction
+       18A4  _longServoInstruction
+       1955  _configToggle
+       1A34  _unloadAllConfigs
+       1A3E  _unloadConfig
+       1A6D  _initializeChildren
+       1AE4  _initSweep
+       1BF2  _xmitWait
+       1C11  _TX_TIMEOUT_ISR
+       1C27  _RX_TIMEOUT_ISR
+       1C3D  Dispatch_INTERRUPT_10
+       1C67  Dispatch_INTERRUPT_9
+       1C86  __divmod_16X16_16
+       1CD4  __divmodu_16X16_16
+       1CDF  __i_div16_block_util
+       1D18  _atoi
+       1E59  _itoa
+       2032  _isdigit
+       2053  _isspace
+       2087  __xidata_end
+       2074  __text_end
 
 Area                               Start  End    Decimal Bytes (Attributes)
 --------------------------------   ----   ----   ------- ----- ------------

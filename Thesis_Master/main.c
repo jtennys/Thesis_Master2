@@ -30,9 +30,9 @@
 
 // These defines are used as parameters of the configToggle function.
 // Passing one or the other in the function call switches the system between PC, TX, and RX modes.
-#define		PC_MODE						(1)
-#define		RX_MODE						(2)
-#define		TX_MODE						(3)
+#define		PC_MODE						(2)
+#define		RX_MODE						(1)
+#define		TX_MODE						(0)
 
 // These defines are used as comparisons to find what port the newest module is connected to.
 #define		PORT_1						('1')
@@ -98,8 +98,6 @@ void initializeChildren(void);
 int initSweep(void);
 // Static wait time of approximately 50 microseconds for use after starting a transmission.
 void xmitWait(void);
-// This is a wait that is approximately 1 ms long, used to wait before transmitting to children.
-void txConfigWait(void);
 
 int NUM_MODULES;			// Stores the number of modules that have been discovered.
 int PREV_NUM_MODULES;		// Stores the previous number of modules that has been discovered.
@@ -143,7 +141,6 @@ int pingModule(int module_id)
 {
 	int response = 0;		// Initialize the response to a fail.
 	configToggle(TX_MODE);	// Toggle into TX mode.
-	txConfigWait();			// Wait 1 ms, in case this ping function is called in a loop.
 	
 	// Transmit a hello.
 	TRANSMIT_PutChar(START_TRANSMIT);
@@ -183,7 +180,6 @@ int assignID(int assigned_ID)
 {
 	int success = 0;		// Stores 0 on fail, 1 on success.
 	configToggle(TX_MODE);	// Switch to TX mode.
-	txConfigWait();			// Wait 1 ms in case this function is called multiple times.
 	
 	// Transmit the assignment.
 	TRANSMIT_PutChar(START_TRANSMIT);
@@ -223,7 +219,6 @@ int assignID(int assigned_ID)
 void clearConfig(void)
 {
 	configToggle(TX_MODE);	// Toggle into TX mode.
-	txConfigWait();			// Wait 1 ms.
 	
 	// Transmit a clear.
 	TRANSMIT_PutChar(START_TRANSMIT);
@@ -249,7 +244,6 @@ void clearConfig(void)
 void sayHello(void)
 {
 	configToggle(TX_MODE);	// Toggle into TX mode.
-	txConfigWait();			// Wait 1 ms so that this function can be called in a loop.
 	
 	// Transmit a hello.
 	TRANSMIT_PutChar(START_TRANSMIT);
@@ -667,6 +661,16 @@ void configToggle(int mode)
 		
 		TIMEOUT = 0;
 		TX_TIMEOUT_EnableInt();	// Make sure interrupts are enabled.
+		TX_TIMEOUT_Start();		// Start the timer.
+		
+		while(!TIMEOUT)
+		{
+			// Do nothing while we wait for one timeout period.
+			// This is to allow everyone to get in the right configuration.
+		}
+		
+		TX_TIMEOUT_Stop();		// Stop the timer.
+		TIMEOUT = 0;			// Reset the timeout flag.
 		
 		STATE = TX_MODE;
 	}
@@ -708,28 +712,16 @@ void initializeChildren(void)
 	int currVal;		// The current number of modules found.
 	int i = 0;			// An int for looping.
 	
-	// Do nothing while we find nothing.
-	//while(!initSweep()) { }
-	
-	// Find the maximum value of modules found, it's our number.
+	// Find a value higher than the previously stored number of modules.
 	while(maxPrev < PREV_NUM_MODULES)
 	{
-		//for(i = 0; i < NUM_SWEEPS; i++)
-		//{
-			currVal = initSweep();
-			
-			if(currVal > maxPrev)
-			{
-				maxPrev = currVal;
-			}
-		//}
+		currVal = initSweep();
+		
+		if(currVal > maxPrev)
+		{
+			maxPrev = currVal;
+		}
 	}
-	
-	// Sweep until we get the max number again.
-//	if(currVal != maxPrev)
-//	{
-//		while(initSweep() != maxPrev) { }
-//	}
 	
 	// Store the number of modules.
 	NUM_MODULES = maxPrev;
@@ -810,20 +802,6 @@ void xmitWait(void)
 	{
 		// Sit here and spin for about 50 microseconds.
 	}
-}
-
-void txConfigWait(void)
-{
-	TX_TIMEOUT_Start();		// Start the timer.
-		
-	while(!TIMEOUT)
-	{
-		// Do nothing while we wait for one timeout period.
-		// This is to allow everyone to get in the right configuration.
-	}
-	
-	TX_TIMEOUT_Stop();		// Stop the timer.
-	TIMEOUT = 0;			// Reset the timeout flag.
 }
 
 void TX_TIMEOUT_ISR(void)
