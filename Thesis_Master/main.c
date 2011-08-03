@@ -1,20 +1,38 @@
-//----------------------------------------------------------------------------
-// C main line
-//----------------------------------------------------------------------------
+// Author: Jason Tennyson
+// Date: 8-3-11
+// File: main.c
+//
+// This is the design for the parent module of Jason Tennyson's Thesis.
+// This design is made for a PSoC CY8C28433-24PVXI.
+//
+// Controller Packet Structure (each field is a byte)
+// -----------------------------------------------------
+// All Packets:
+// START BYTE/START BYTE/SOURCE ID/DESTINATION ID/COMMAND TYPE/PARAM 1/.../PARAM N/END TRANSMIT
+//
+// Servo Packet Structure (each field is a byte)
+// -----------------------------------------------------
+// Source Packets:
+// START BYTE/START BYTE/DESTINATION ID/LENGTH/COMMAND TYPE/PARAM 1/.../PARAM N/CHECKSUM
+//
+// Return Packets:
+// START BYTE/START BYTE/SOURCE ID/LENGTH/ERROR/PARAM1/.../PARAM N/CHECKSUM
 
 #include <m8c.h>        	// part specific constants and macros
 #include "PSoCAPI.h"    	// PSoC API definitions for all User Modules
-#include "psocdynamic.h"
-#include <stdlib.h>
+#include "psocdynamic.h"	// Required for dynamically swapping configurations at run time.
+#include <stdlib.h>			// Required for string conversions to floats/ints and vice versa.
 #include <string.h>
+
+// These are declarations of all of the timer interrupts that are used for all configurations.
 #pragma interrupt_handler TX_TIMEOUT_ISR
 #pragma interrupt_handler RX_TIMEOUT_ISR
 
 // These defines are used as parameters of the configToggle function.
 // Passing one or the other in the function call switches the system between PC, TX, and RX modes.
-#define		PC_MODE						(2)
-#define		RX_MODE						(1)
-#define		TX_MODE						(0)
+#define		PC_MODE						(1)
+#define		RX_MODE						(2)
+#define		TX_MODE						(3)
 
 // These defines are used as comparisons to find what port the newest module is connected to.
 #define		PORT_1						('1')
@@ -33,6 +51,7 @@
 #define		MASTER_ID					(0)		// The master node's ID.
 #define		BROADCAST					(254)	// The broadcast ID for talking to all nodes.
 #define		BLANK_MODULE_ID				(251)	// This is the ID of an unconfigured module.
+#define		SERVO_START					(255)	// The start byte of a servo transmission.
 
 // These defines are used to fill in the instruction we are using on the servo.
 #define		PING_SERVO					(1)		// This is the instruction number for ping.
@@ -41,51 +60,46 @@
 #define		RESET_SERVO					(6)		// This is the instruction to reset the servo EEPROM.
 
 // These defines are used for transmission timing.
-#define 	RX_TIMEOUT_DURATION			(3)		// This is receive wait time in 1 ms units.
-
-#define		SERVO_FIND_TIME				(24)	// The wait time after issuing clear config.
-
-#define		MAX_TIMEOUTS				(5)		// Number of timeouts allowed before hello mode exit.
-#define		NUM_SWEEPS					(5)		// The number of module sweeps to do at init.
+#define 	RX_TIMEOUT_DURATION			(3)		// This is receive wait time in ms.
+#define		POST_RX_WAIT				(10)	// Wait time after a controller responds in ms.
+#define		SERVO_FIND_TIME				(24)	// The wait time after issuing clear config in ms.
+#define		MAX_TIMEOUTS				(50)	// Number of timeouts allowed before hello mode exit.
 
 // This is the maximum number of allowable modules per branch out from the master
 #define		MAX_MODULES					(9)
 
-#define		SERVO_START					(255)
-
 // This function receives a mode identifier as a parameter and toggles the
 // system configuration between receive and transmit modes for half duplex UART.
 void configToggle(int mode);
-
+// Transmits a hello message.
+void sayHello(void);
 // This function pings the index passed to it. Returns 1 on success, 0 on fail.
 int pingModule(int module_id);
-
 // This function assigns an ID to a module.
 int assignID(int assigned_ID);
-
-int validTransmission(void);
-
+// Performs a non-blocking read operation on a data packet that has come from a controller.
+int validResponse(void);
+// Performs a data packet decode on a transmission from an external computer.
+// This function also performs the desired operation when it is finished decoding.
 void decodeTransmission(void);
-
-
-void sayHello(void);
-
+// Performs a standard read or write command to a servo.
 void servoInstruction(char id, char length, char instruction, char address, char value);
+// Performs a write command to a servo value that is larger than one byte long.
 void longServoInstruction(char id, char length, char instruction, char address, char value1, char value2);
-
+// Sends out a request to clear all information and start over.
 void clearConfig(void);
 // This function checks the current mode and unloads the configuration for that mode.
 void unloadAllConfigs(void);
 // This function unloads the configuration corresponding to the number passed to it.
 void unloadConfig(int config_num);
 // Initialization function for the slave module controllers.
-void initializeSlaves(void);
+void initializeChildren(void);
+// A single initialization sweep.
 int initSweep(void);
 // Static wait time of approximately 50 microseconds for use after starting a transmission.
 void xmitWait(void);
-
-// This flag is set if there is a timeout.
-int TIMEOUT;
+// This is a wait that is approximately 1 ms long, used to wait before transmitting to children.
+void txConfigWait(void);
 
 int NUM_MODULES;			// Stores the number of modules that have been discovered.
 int PREV_NUM_MODULES;		// Stores the previous number of modules that has been discovered.
@@ -95,6 +109,7 @@ char COMMAND_DESTINATION;	// Stores who the current command is for.
 char COMMAND_TYPE;			// Stores the type of command that was just read.
 char PARAM[10];				// Stores a parameters that accompanies the command (if any).
 int STATE;					// Stores the current configuration state of the system.
+int TIMEOUT;				// This flag is set if there is a timeout.
 
 void main()
 {	
@@ -113,10 +128,12 @@ void main()
 	{
 		if(!NUM_MODULES)
 		{
-			initializeSlaves();
+			// Find some modules.
+			initializeChildren();
 		}
-		else if(COMP_SERIAL_bCmdCheck())		// If there's a computer command, read it.
+		else if(COMP_SERIAL_bCmdCheck())
 		{
+			// If there's a computer command, read it.
 			decodeTransmission();
 		}
 	}
@@ -124,10 +141,10 @@ void main()
 
 int pingModule(int module_id)
 {
-	int response = 0;
-	
+	int response = 0;		// Initialize the response to a fail.
 	configToggle(TX_MODE);	// Toggle into TX mode.
-			
+	txConfigWait();			// Wait 1 ms, in case this ping function is called in a loop.
+	
 	// Transmit a hello.
 	TRANSMIT_PutChar(START_TRANSMIT);
 	TRANSMIT_PutChar(START_TRANSMIT);
@@ -140,11 +157,13 @@ int pingModule(int module_id)
 	// Wait for the transmission to finish.
 	while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
 	
+	// Wait an additional amount of time to be sure.
 	xmitWait();
 
-	if(validTransmission())
+	// If we get a valid response, check the extracted parameters for what we want.
+	if(validResponse())
 	{
-		if(COMMAND_TYPE == PING)	// This is the response we are looking for.
+		if(COMMAND_TYPE == PING)
 		{
 			// If this is for me, check who it was from.
 			if(COMMAND_DESTINATION == MASTER_ID)
@@ -163,9 +182,9 @@ int pingModule(int module_id)
 int assignID(int assigned_ID)
 {
 	int success = 0;		// Stores 0 on fail, 1 on success.
-	
 	configToggle(TX_MODE);	// Switch to TX mode.
-
+	txConfigWait();			// Wait 1 ms in case this function is called multiple times.
+	
 	// Transmit the assignment.
 	TRANSMIT_PutChar(START_TRANSMIT);
 	TRANSMIT_PutChar(START_TRANSMIT);
@@ -179,11 +198,13 @@ int assignID(int assigned_ID)
 	// Wait for the transmission to finish.
 	while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
 	
+	// Wait an additional amount of time to make sure the xmit gets out.
 	xmitWait();
 	
-	if(validTransmission())
+	// If we read a valid response, check the extracted parameters for what we want.
+	if(validResponse())
 	{
-		if(COMMAND_TYPE == ID_ASSIGN_OK)	// This is the response we are looking for.
+		if(COMMAND_TYPE == ID_ASSIGN_OK)
 		{
 			// If this is for me, check who it was from.
 			if(COMMAND_DESTINATION == MASTER_ID)
@@ -201,10 +222,9 @@ int assignID(int assigned_ID)
 
 void clearConfig(void)
 {
-	int response = 0;
-	
 	configToggle(TX_MODE);	// Toggle into TX mode.
-			
+	txConfigWait();			// Wait 1 ms.
+	
 	// Transmit a clear.
 	TRANSMIT_PutChar(START_TRANSMIT);
 	TRANSMIT_PutChar(START_TRANSMIT);
@@ -217,9 +237,10 @@ void clearConfig(void)
 	// Wait for the transmission to finish.
 	while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
 	
+	// Wait an additional amount of time to make sure that our xmit got out.
 	xmitWait();
 	
-	// Wait for servo find time.
+	// Wait for servo find time to allow the children to reset.
 	configToggle(RX_MODE);
 	while(TIMEOUT < SERVO_FIND_TIME) { }
 }
@@ -227,8 +248,9 @@ void clearConfig(void)
 // This function transmits a hello message.
 void sayHello(void)
 {
-	configToggle(TX_MODE);				// Toggle into TX mode.
-			
+	configToggle(TX_MODE);	// Toggle into TX mode.
+	txConfigWait();			// Wait 1 ms so that this function can be called in a loop.
+	
 	// Transmit a hello.
 	TRANSMIT_PutChar(START_TRANSMIT);
 	TRANSMIT_PutChar(START_TRANSMIT);
@@ -241,13 +263,15 @@ void sayHello(void)
 	// Wait for the transmission to finish.
 	while(!( TRANSMIT_bReadTxStatus() & TRANSMIT_TX_COMPLETE));
 	
+	// Wait an additional amount of time to allow the xmit to get out.
 	xmitWait();
 	
-	configToggle(RX_MODE);				// Listen for the response.
+	// Listen for the response.
+	configToggle(RX_MODE);
 }
 
 // This function returns whether or not a valid transmission has been received.
-int validTransmission(void)
+int validResponse(void)
 {
 	int valid_transmit = 0;
 	int i = 0;
@@ -255,6 +279,10 @@ int validTransmission(void)
 	
 	configToggle(RX_MODE);	// Listen for the response.
 	
+	// The following code looks very nasty. Basically, while we haven't hit the rx timeout,
+	// it checks the buffer for a command with non-blocking read commands. When the next byte
+	// is found, we enter another while loop to read for the next byte and so on. We do this
+	// so that the parent doesn't get stuck in rx mode when a child doesn't respond.
 	while(TIMEOUT < RX_TIMEOUT_DURATION)
 	{
 		if(RECEIVE_cReadChar() == START_TRANSMIT)
@@ -324,7 +352,7 @@ void decodeTransmission(void)
 	{
 		if((param[0] == 'x') || (param[0] == 'X'))
 		{
-			// Reset
+			// Reset the arm.
 			NUM_MODULES = 0;
 			if(param = COMP_SERIAL_szGetParam())
 			{
@@ -342,6 +370,7 @@ void decodeTransmission(void)
 		}
 		else if((param[0] == 'n') || (param[0] == 'N'))
 		{
+			// Return the number of modules that we have found.
 			itoa(param,NUM_MODULES,10);
 			COMP_SERIAL_PutString(param);
 			COMP_SERIAL_PutChar('\n');
@@ -358,6 +387,7 @@ void decodeTransmission(void)
 					{
 						if(param = COMP_SERIAL_szGetParam())
 						{
+							// Write the desired angle to the servo.
 							total = atoi(param);
 							angle[0] = total%256;
 							angle[1] = total/256;
@@ -368,6 +398,7 @@ void decodeTransmission(void)
 					{
 						if(param = COMP_SERIAL_szGetParam())
 						{
+							// Write the desired power value to the servo.
 							servoInstruction(ID,4,WRITE_SERVO,24,atoi(param));
 						}
 					}
@@ -401,6 +432,7 @@ void decodeTransmission(void)
 						angle[0] = 0;
 						angle[1] = 0;
 						
+						// Send a request for the servo's angle.
 						servoInstruction(ID,4,READ_SERVO,36,2);
 						configToggle(RX_MODE);
 							
@@ -415,11 +447,13 @@ void decodeTransmission(void)
 									{
 										if(RECEIVE_cGetChar() == 0)
 										{
+											// Grab the angle bytes.
 											angle[0] = RECEIVE_cGetChar();
 											angle[1] = RECEIVE_cGetChar();
 											
 											configToggle(PC_MODE);
 											
+											// Convert the bytes to an int from 0-1023 and send.
 											total = ((angle[1])*256) + angle[0];
 											itoa(param,total,10);
 											COMP_SERIAL_PutString(param);
@@ -485,16 +519,18 @@ void decodeTransmission(void)
 					}
 					else if ((param[0] == 't') || (param[0] == 'T'))
 					{
+						// Ping the module and return its type field to the PC.
 						if(pingModule(ID))
 						{
 							configToggle(PC_MODE);
-												
+							
 							COMP_SERIAL_PutChar(PARAM[0]);
 							COMP_SERIAL_PutChar('\n');
 						}
 					}
 					else if ((param[0] == 'c') || (param[0] == 'C'))
 					{
+						// Ping the module and return its child port to the PC.
 						if(pingModule(ID))
 						{	
 							configToggle(PC_MODE);
@@ -631,16 +667,6 @@ void configToggle(int mode)
 		
 		TIMEOUT = 0;
 		TX_TIMEOUT_EnableInt();	// Make sure interrupts are enabled.
-		TX_TIMEOUT_Start();		// Start the timer.
-		
-		while(!TIMEOUT)
-		{
-			// Do nothing while we wait for one timeout period.
-			// This is to allow everyone to get in the right configuration.
-		}
-		
-		TX_TIMEOUT_Stop();		// Stop the timer.
-		TIMEOUT = 0;			// Reset the timeout flag.
 		
 		STATE = TX_MODE;
 	}
@@ -676,7 +702,7 @@ void unloadConfig(int config_num)
 	}
 }
 
-void initializeSlaves(void)
+void initializeChildren(void)
 {
 	int maxPrev = 0;	// The maximum previous value.
 	int currVal;		// The current number of modules found.
@@ -737,7 +763,7 @@ int initSweep(void)
 			num_timeouts = MAX_TIMEOUTS;
 		}
 			
-		if(validTransmission())
+		if(validResponse())
 		{
 			if(COMMAND_TYPE == HELLO_BYTE)	// Someone else is out there!
 			{
@@ -784,6 +810,20 @@ void xmitWait(void)
 	{
 		// Sit here and spin for about 50 microseconds.
 	}
+}
+
+void txConfigWait(void)
+{
+	TX_TIMEOUT_Start();		// Start the timer.
+		
+	while(!TIMEOUT)
+	{
+		// Do nothing while we wait for one timeout period.
+		// This is to allow everyone to get in the right configuration.
+	}
+	
+	TX_TIMEOUT_Stop();		// Stop the timer.
+	TIMEOUT = 0;			// Reset the timeout flag.
 }
 
 void TX_TIMEOUT_ISR(void)
